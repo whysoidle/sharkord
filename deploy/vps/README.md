@@ -2,7 +2,7 @@
 
 This fork supports running under `/voice/`. Build the browser client with the same base path that the server receives in `SHARKORD_BASE_PATH`. The reverse proxy strips the prefix before forwarding HTTP and WebSocket requests to Sharkord. Other paths keep going to Foundry on port 30000.
 
-The theme selector is available on the sign-in screen, in the desktop header, and under User Settings > Others > Theme. Each browser remembers its System, Dark or Light preference. System follows operating system changes immediately. Switching themes keeps the current app and voice session mounted.
+The theme selector is available on the sign-in screen and under User Settings > Others > Theme. Each browser remembers its System, Dark or Light preference. System follows operating system changes immediately. Switching themes keeps the current app and voice session mounted.
 
 ```sh
 bun install --frozen-lockfile

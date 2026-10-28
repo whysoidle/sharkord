@@ -4,9 +4,8 @@ import { loginAs } from './fixtures';
 
 test.use({ locale: 'en-US' });
 
-const selectTheme = async (page: Page, name: string, inSettings = false) => {
-  const controls = page.getByTestId('theme-switcher');
-  const control = inSettings ? controls.last() : controls.first();
+const selectTheme = async (page: Page, name: string) => {
+  const control = page.getByTestId('theme-switcher');
   await control.click();
   await page.getByRole('option', { name, exact: true }).click();
 };
@@ -110,6 +109,13 @@ test('theme changes apply to the app and settings without remounting the app', a
   await selectTheme(page, 'Light');
   await loginAs(page, 'testowner', 'password123');
   const app = await page.getByTestId(TestId.SERVER_VIEW).elementHandle();
+  await expect(page.getByTestId('theme-switcher')).toHaveCount(0);
+  await page.getByTestId(TestId.USER_SETTINGS_TRIGGER).click();
+  await page
+    .getByTestId(TestId.SETTINGS_SIDEBAR_ENTRY)
+    .filter({ hasText: 'Others' })
+    .click();
+  await expect(page.getByTestId('theme-switcher')).toHaveCount(1);
   await selectTheme(page, 'Dark');
   expect(
     await app?.evaluate((element) => {
@@ -118,12 +124,7 @@ test('theme changes apply to the app and settings without remounting the app', a
     })
   ).toBe(true);
   await expect(page.locator('html')).toHaveClass('dark');
-  await page.getByTestId(TestId.USER_SETTINGS_TRIGGER).click();
-  await page
-    .getByTestId(TestId.SETTINGS_SIDEBAR_ENTRY)
-    .filter({ hasText: 'Others' })
-    .click();
-  await selectTheme(page, 'Light', true);
+  await selectTheme(page, 'Light');
   await expect(page.locator('html')).toHaveClass('light');
   await expect(page.locator('body .dark')).toHaveCount(0);
 });
