@@ -9,6 +9,7 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
 
   return {
+    base: env.SHARKORD_BASE_PATH ? `${env.SHARKORD_BASE_PATH}/` : '/',
     plugins: [react(), tailwindcss()],
     build: {
       target: 'esnext'

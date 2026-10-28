@@ -76,6 +76,16 @@ describe('link preview ssrf guard', () => {
 });
 
 describe('message metadata normalization', () => {
+  test('deduplicates links and limits work per message', async () => {
+    const urls = [1, 1, 2, 3, 4, 5].map(
+      (index) => `https://93.184.216.34/${index}.png`
+    );
+    const content = urls.join(' ');
+    const messageId = await insertMessage(content);
+    await processMessageMetadata(content, messageId);
+    const metadata = await storedMetadata(messageId);
+    expect(metadata).toHaveLength(3);
+  });
   test('normalizes link-preview-js style previews into open graph metadata', () => {
     const metadata = createOpenGraphMetadata(
       {

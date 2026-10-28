@@ -18,6 +18,9 @@ const { values } = parseArgs({
     bump: {
       type: 'string',
       default: 'none'
+    },
+    target: {
+      type: 'string'
     }
   },
   strict: true,
@@ -80,13 +83,21 @@ await zipDirectory(drizzleMigrationsPath, drizzleZipPath);
 
 console.log('Compiling server with Bun...');
 
-const targets: TTarget[] = [
+const availableTargets: TTarget[] = [
   { out: 'sharkord-linux-x64', target: 'bun-linux-x64' },
   { out: 'sharkord-linux-arm64', target: 'bun-linux-arm64' },
   { out: 'sharkord-windows-x64.exe', target: 'bun-windows-x64' },
   { out: 'sharkord-macos-arm64', target: 'bun-darwin-arm64' }
   // mediasoup doesn't support macOS x64
 ];
+
+const targets = values.target
+  ? availableTargets.filter((target) => target.target === values.target)
+  : availableTargets;
+
+if (targets.length === 0) {
+  throw new Error(`Unsupported build target: ${values.target}`);
+}
 
 for (const target of targets) {
   console.log(`Building for target: ${target.target}...`);

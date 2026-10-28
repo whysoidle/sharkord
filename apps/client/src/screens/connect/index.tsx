@@ -160,7 +160,7 @@ const Connect = memo(() => {
       return getFileUrl(info.logo);
     }
 
-    return '/logo.webp';
+    return `${import.meta.env.BASE_URL}logo.webp`;
   }, [info]);
 
   if (oidc.isCompleting) {

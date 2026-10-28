@@ -1,5 +1,5 @@
 import { Permission, UploadHeaders, type TTempFile } from '@sharkord/shared';
-import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { and, eq } from 'drizzle-orm';
 import fs from 'fs/promises';
 import net from 'net';
@@ -8,7 +8,8 @@ import { login, uploadFile } from '../../__tests__/helpers';
 import { tdb, testsBaseUrl } from '../../__tests__/setup';
 import { config } from '../../config';
 import { rolePermissions, settings, users } from '../../db/schema';
-import { TMP_PATH } from '../../helpers/paths';
+import { fileManager } from '../../helpers/file-manager';
+import { TMP_PATH, UPLOADS_PATH } from '../../helpers/paths';
 import { sanitizeFileName } from '../helpers';
 
 const getMockFile = (content: string): File => {
@@ -62,6 +63,68 @@ describe('/upload', () => {
       'Hello, this is a test file for upload.'
     );
     expect((await fs.stat(expectedPath)).size).toBe(file.size);
+  });
+
+  test('rejects an upload when the free disk reserve would be consumed', async () => {
+    const disk = await fs.statfs(UPLOADS_PATH);
+    spyOn(fs, 'statfs').mockResolvedValue({ ...disk, bavail: 0 });
+    const response = await uploadFile(getMockFile('no room'), token);
+    expect(response.status).toBe(507);
+    expect(fileManager.getTemporaryStorageUsage()).toBe(0);
+  });
+
+  test('rejects an upload before writing when the user quota is exceeded', async () => {
+    await tdb.update(settings).set({ storageSpaceQuotaByUser: 1 });
+    const before = await fs.readdir(UPLOADS_PATH);
+    const response = await uploadFile(getMockFile('too much'), token);
+    expect(response.status).toBe(413);
+    expect(await fs.readdir(UPLOADS_PATH)).toEqual(before);
+  });
+
+  test('removes a partial upload after the client disconnects', async () => {
+    const before = new Set(await fs.readdir(UPLOADS_PATH));
+    const { port } = new URL(testsBaseUrl);
+    const socket = net.connect(Number(port), 'localhost');
+    socket.on('error', () => {});
+    const closed = new Promise<void>((resolve) =>
+      socket.once('close', () => resolve())
+    );
+
+    try {
+      socket.write(
+        [
+          'POST /upload HTTP/1.1',
+          'Host: localhost',
+          'Content-Length: 1048576',
+          `${UploadHeaders.ORIGINAL_NAME}: interrupted.png`,
+          `${UploadHeaders.TOKEN}: ${token}`,
+          '',
+          'partial'
+        ].join('\r\n')
+      );
+
+      let created = false;
+      for (let i = 0; i < 100; i++) {
+        const entries = await fs.readdir(UPLOADS_PATH);
+        created = entries.some((entry) => !before.has(entry));
+        if (created) break;
+        await Bun.sleep(10);
+      }
+      expect(created).toBe(true);
+    } finally {
+      socket.destroy();
+      await closed;
+    }
+
+    for (let i = 0; i < 100; i++) {
+      const entries = await fs.readdir(UPLOADS_PATH);
+      if (entries.every((entry) => before.has(entry))) break;
+      await Bun.sleep(10);
+    }
+
+    const after = await fs.readdir(UPLOADS_PATH);
+    expect(after.every((entry) => before.has(entry))).toBe(true);
+    expect(fileManager.getTemporaryStorageUsage()).toBe(0);
   });
 
   test('should throw when upload headers are missing', async () => {

@@ -17,7 +17,7 @@ const loadMediasoup = async () => {
   const port = +config.webRtc.port;
 
   const workerConfig: mediasoup.types.WorkerSettings = {
-    logLevel: 'debug',
+    logLevel: config.server.debug ? 'debug' : 'warn',
     disableLiburing: true,
     workerBin: MEDIASOUP_BINARY_PATH
   };
@@ -34,6 +34,7 @@ const loadMediasoup = async () => {
     mediaSoupWorker = await mediasoup.createWorker(workerConfig);
   } catch (error) {
     logger.error('Failed to load mediasoup worker: %s', getErrorMessage(error));
+    throw error;
   } finally {
     restoreSpawn();
   }
@@ -41,7 +42,7 @@ const loadMediasoup = async () => {
   mediaSoupWorker.on('died', (error) => {
     logger.error('Mediasoup worker died: %s', getErrorMessage(error));
 
-    setTimeout(() => process.exit(0), 2000);
+    setTimeout(() => process.exit(1), 2000);
   });
 
   logger.debug('Mediasoup worker loaded');

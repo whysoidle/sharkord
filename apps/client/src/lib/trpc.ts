@@ -45,7 +45,7 @@ const initializeTRPC = (host: string) => {
   const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
 
   wsClient = createWSClient({
-    url: `${protocol}://${host}`,
+    url: `${protocol}://${host}/`,
     onOpen: () => {
       pushVoiceDebugEvent('ws', 'websocket open', { host });
     },

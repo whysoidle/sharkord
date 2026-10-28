@@ -1,6 +1,7 @@
 import { getErrorMessage, Permission, UploadHeaders } from '@sharkord/shared';
 import fs from 'fs';
 import http from 'http';
+import { pipeline } from 'stream/promises';
 import z from 'zod';
 import { config } from '../config';
 import { userCan } from '../db/queries/roles';
@@ -8,6 +9,7 @@ import { getSettings } from '../db/queries/server';
 import { getUserByToken } from '../db/queries/users';
 import { fileManager } from '../helpers/file-manager';
 import { getWsInfo } from '../helpers/get-ws-info';
+import { reserveUpload, UploadCapacityError } from '../helpers/upload-capacity';
 import { logger } from '../logger';
 import { createRateLimiter } from '../utils/rate-limiters/rate-limiter';
 import {
@@ -81,7 +83,7 @@ const uploadFileRouteHandler = async (
 
   if (contentLength > settings.storageUploadMaxFileSize) {
     req.resume();
-    req.on('end', () => {
+    req.once('end', () => {
       sendJsonError(
         res,
         413,
@@ -94,52 +96,69 @@ const uploadFileRouteHandler = async (
 
   if (!settings.storageUploadEnabled) {
     req.resume();
-    req.on('end', () => {
+    req.once('end', () => {
       sendJsonError(res, 403, 'File uploads are disabled on this server');
     });
 
     return;
   }
 
-  const safePath = await fileManager.getSafeUploadPath(originalName);
-  const fileStream = fs.createWriteStream(safePath);
+  let release: (() => void) | undefined;
+  let safePath: string | undefined;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
 
-  req.pipe(fileStream);
+  try {
+    release = await reserveUpload(user.id, contentLength, settings);
+    if (req.destroyed) return;
 
-  fileStream.on('finish', async () => {
-    try {
-      const { size } = await fs.promises.stat(safePath);
+    safePath = await fileManager.getSafeUploadPath(originalName);
+    const fileStream = fs.createWriteStream(safePath, {
+      flags: 'wx',
+      mode: 0o600
+    });
 
-      if (size !== contentLength) {
-        await fs.promises.rm(safePath, { force: true });
-        sendJsonError(res, 400, 'Upload did not match the declared size');
+    timeout = setTimeout(() => {
+      req.destroy(new Error('Upload timed out'));
+    }, config.server.uploadTimeoutMs);
 
-        return;
-      }
+    await pipeline(req, fileStream);
+    const { size } = await fs.promises.stat(safePath);
 
-      const tempFile = await fileManager.addTemporaryFile({
-        originalName,
-        filePath: safePath,
-        size,
-        userId: user.id
-      });
-
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(tempFile));
-    } catch (error) {
-      logger.error(
-        'Error processing uploaded file: %s',
-        getErrorMessage(error)
-      );
-      sendJsonError(res, 500, 'File processing failed');
+    if (size !== contentLength) {
+      sendJsonError(res, 400, 'Upload did not match the declared size');
+      return;
     }
-  });
 
-  fileStream.on('error', (err) => {
-    logger.error('Error uploading file: %s', getErrorMessage(err));
+    const tempFile = await fileManager.addTemporaryFile({
+      originalName,
+      filePath: safePath,
+      size,
+      userId: user.id
+    });
 
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(tempFile));
+  } catch (error) {
+    if (req.aborted || res.destroyed) return;
+
+    req.resume();
+
+    if (error instanceof UploadCapacityError) {
+      sendJsonError(res, error.statusCode, error.message);
+      return;
+    }
+
+    logger.error('Error uploading file: %s', getErrorMessage(error));
     sendJsonError(res, 500, 'File upload failed');
-  });
+  } finally {
+    clearTimeout(timeout);
+
+    try {
+      if (safePath) await fs.promises.rm(safePath, { force: true });
+    } finally {
+      release?.();
+    }
+  }
 };
 
 export { uploadFileRouteHandler };

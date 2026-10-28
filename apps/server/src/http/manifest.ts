@@ -2,6 +2,7 @@ import type { TJoinedSettings, TWebAppManifest } from '@sharkord/shared';
 import http from 'http';
 import { imageSizeFromFile } from 'image-size/fromFile';
 import path from 'path';
+import { config } from '../config';
 import { getSettings } from '../db/queries/server';
 import { PUBLIC_PATH } from '../helpers/paths';
 
@@ -93,11 +94,14 @@ const manifestRouteHandler = async (
     name: settings.name,
     short_name: settings.name.slice(0, 12),
     description: settings.description ?? '',
-    start_url: '/',
+    start_url: `${config.server.basePath}/`,
     display: 'standalone',
     background_color: '#171717',
     theme_color: '#171717',
-    icons
+    icons: icons.map((icon) => ({
+      ...icon,
+      src: `${config.server.basePath}${icon.src}`
+    }))
   };
 
   res.writeHead(200, {

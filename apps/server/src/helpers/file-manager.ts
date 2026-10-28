@@ -11,8 +11,8 @@ import {
   type TTempFile
 } from '@sharkord/shared';
 import { randomUUIDv7 } from 'bun';
-import { createHash } from 'crypto';
 import { eq } from 'drizzle-orm';
+import { createReadStream } from 'fs';
 import fs from 'fs/promises';
 import path from 'path';
 import { db } from '../db';
@@ -54,10 +54,12 @@ const OPTIMIZABLE_IMAGE_EXTENSIONS = new Set([
 ]);
 
 const md5File = async (path: string): Promise<string> => {
-  const file = await fs.readFile(path);
-  const hash = createHash('md5');
+  const hash = new Bun.CryptoHasher('md5');
+  const stream = createReadStream(path);
 
-  hash.update(file);
+  for await (const chunk of stream) {
+    hash.update(chunk);
+  }
 
   return hash.digest('hex');
 };
@@ -116,6 +118,39 @@ class TemporaryFileManager {
     return this.temporaryFiles.find((file) => file.id === id);
   };
 
+  public getTemporaryStorageUsage = (userId?: number): number => {
+    return this.temporaryFiles.reduce((total, file) => {
+      if (userId !== undefined && file.userId !== userId) return total;
+
+      return total + file.size;
+    }, 0);
+  };
+
+  public clearTemporaryFiles = async () => {
+    const ids = this.temporaryFiles.map((file) => file.id);
+    await Promise.all(ids.map((id) => this.removeTemporaryFile(id)));
+  };
+
+  public pauseExpiry = (id: string) => {
+    if (!this.timeouts[id]) {
+      throw new Error('File is already being saved');
+    }
+
+    clearTimeout(this.timeouts[id]);
+    delete this.timeouts[id];
+  };
+
+  public scheduleExpiry = (tempFile: TTempFile) => {
+    this.timeouts[tempFile.id] = setTimeout(() => {
+      this.removeTemporaryFile(tempFile.id).catch((error) => {
+        logger.error(
+          'Temporary file cleanup failed: %s',
+          getErrorMessage(error)
+        );
+      });
+    }, TEMP_FILE_TTL);
+  };
+
   public temporaryFileExists = (id: string): boolean => {
     return !!this.temporaryFiles.find((file) => file.id === id);
   };
@@ -166,9 +201,7 @@ class TemporaryFileManager {
 
     this.temporaryFiles.push(tempFile);
 
-    this.timeouts[tempFile.id] = setTimeout(() => {
-      this.removeTemporaryFile(tempFile.id);
-    }, TEMP_FILE_TTL);
+    this.scheduleExpiry(tempFile);
 
     return tempFile;
   };
@@ -184,6 +217,8 @@ class TemporaryFileManager {
     }
 
     clearTimeout(this.timeouts[id]);
+    delete this.timeouts[id];
+    this.temporaryFiles = this.temporaryFiles.filter((file) => file.id !== id);
 
     if (!skipDelete) {
       try {
@@ -192,8 +227,6 @@ class TemporaryFileManager {
         // ignore
       }
     }
-
-    this.temporaryFiles = this.temporaryFiles.filter((file) => file.id !== id);
   };
 
   public getSafeUploadPath = async (name: string): Promise<string> => {
@@ -214,6 +247,9 @@ class FileManager {
   public removeTemporaryFile = this.tempFileManager.removeTemporaryFile;
 
   public getTemporaryFile = this.tempFileManager.getTemporaryFile;
+  public getTemporaryStorageUsage =
+    this.tempFileManager.getTemporaryStorageUsage;
+  public clearTemporaryFiles = this.tempFileManager.clearTemporaryFiles;
   public temporaryFileExists = this.tempFileManager.temporaryFileExists;
 
   public temporaryFileHasMimeType =
@@ -514,7 +550,21 @@ class FileManager {
       throw new Error("You don't have permission to access this file");
     }
 
-    return this.persistTempFile(tempFile, { userId, pluginId: null }, type);
+    this.tempFileManager.pauseExpiry(tempFileId);
+
+    try {
+      return await this.persistTempFile(
+        tempFile,
+        { userId, pluginId: null },
+        type
+      );
+    } catch (error) {
+      if (this.temporaryFileExists(tempFileId)) {
+        this.tempFileManager.scheduleExpiry(tempFile);
+      }
+
+      throw error;
+    }
   }
 
   public async savePluginFile(
@@ -536,6 +586,8 @@ class FileManager {
       originalName,
       userId: null
     });
+
+    this.tempFileManager.pauseExpiry(tempFile.id);
 
     try {
       return await this.persistTempFile(

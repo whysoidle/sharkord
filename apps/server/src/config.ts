@@ -33,11 +33,16 @@ const zFailedAttemptsLimiter = z.object({
 const zConfig = z.object({
   server: z.object({
     host: z.string().trim(),
+    basePath: z.string().regex(/^(?:\/[^?#]*)?$/),
     port: z.coerce.number().int().positive(),
     debug: z.coerce.boolean(),
     autoupdate: z.coerce.boolean(),
     backupDatabase: z.coerce.boolean(),
     maxRequestBodyBytes: z.coerce.number().int().positive(),
+    maxConcurrentUploads: z.coerce.number().int().positive(),
+    minFreeDiskBytes: z.coerce.number().int().nonnegative(),
+    uploadTimeoutMs: z.coerce.number().int().positive(),
+    linkPreviewsEnabled: z.coerce.boolean(),
     allowedOrigins: z
       .preprocess(
         (value) => {
@@ -109,11 +114,16 @@ type TConfig = z.infer<typeof zConfig>;
 const defaultConfig: TConfig = {
   server: {
     host: '',
+    basePath: '',
     port: 4991,
     debug: IS_DEVELOPMENT,
     autoupdate: false,
     backupDatabase: true,
     maxRequestBodyBytes: 256 * 1024,
+    maxConcurrentUploads: 2,
+    minFreeDiskBytes: 256 * 1024 * 1024,
+    uploadTimeoutMs: 120_000,
+    linkPreviewsEnabled: true,
     allowedOrigins: ['*'],
     trustedProxies: [
       '127.0.0.1',
@@ -280,11 +290,16 @@ if (!configExists) {
 
 const envOverridesMap: Record<string, string> = {
   'server.host': 'SHARKORD_HOST',
+  'server.basePath': 'SHARKORD_BASE_PATH',
   'server.port': 'SHARKORD_PORT',
   'server.debug': 'SHARKORD_DEBUG',
   'server.autoupdate': 'SHARKORD_AUTOUPDATE',
   'server.backupDatabase': 'SHARKORD_BACKUP_DATABASE',
   'server.maxRequestBodyBytes': 'SHARKORD_MAX_REQUEST_BODY_BYTES',
+  'server.maxConcurrentUploads': 'SHARKORD_MAX_CONCURRENT_UPLOADS',
+  'server.minFreeDiskBytes': 'SHARKORD_MIN_FREE_DISK_BYTES',
+  'server.uploadTimeoutMs': 'SHARKORD_UPLOAD_TIMEOUT_MS',
+  'server.linkPreviewsEnabled': 'SHARKORD_LINK_PREVIEWS_ENABLED',
   'server.allowedOrigins': 'SHARKORD_ALLOWED_ORIGINS',
   'server.trustedProxies': 'SHARKORD_TRUSTED_PROXIES',
   'oidc.enabled': 'SHARKORD_OIDC_ENABLED',

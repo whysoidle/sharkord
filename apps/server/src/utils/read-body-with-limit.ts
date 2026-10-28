@@ -9,6 +9,7 @@ const readBodyWithLimit = async (
   { maxBytes, tooLargeMessage, onChunk }: TReadBodyOptions
 ): Promise<void> => {
   if (Number(response.headers.get('content-length')) > maxBytes) {
+    await response.body?.cancel();
     throw new Error(tooLargeMessage);
   }
 

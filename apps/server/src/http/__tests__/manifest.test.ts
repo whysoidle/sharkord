@@ -1,9 +1,27 @@
 import type { TWebAppManifest } from '@sharkord/shared';
 import { describe, expect, test } from 'bun:test';
 import { tdb, testsBaseUrl } from '../../__tests__/setup';
+import { config } from '../../config';
 import { files, settings } from '../../db/schema';
 
 describe('/manifest.json', () => {
+  test('keeps the app start URL and icons under the configured base path', async () => {
+    const previous = config.server.basePath;
+    config.server.basePath = '/%D0%B3%D0%BE%D0%BB%D0%BE%D1%81';
+
+    try {
+      const response = await fetch(`${testsBaseUrl}/manifest.json`);
+      const manifest = (await response.json()) as TWebAppManifest;
+      expect(manifest.start_url).toBe(`${config.server.basePath}/`);
+      expect(
+        manifest.icons.every((icon) =>
+          icon.src.startsWith(`${config.server.basePath}/`)
+        )
+      ).toBe(true);
+    } finally {
+      config.server.basePath = previous;
+    }
+  });
   test('should return PWA manifest with correct structure', async () => {
     const response = await fetch(`${testsBaseUrl}/manifest.json`);
 

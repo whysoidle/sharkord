@@ -1,5 +1,6 @@
 import { stripZalgo } from '@sharkord/shared';
 import sanitize from 'sanitize-html';
+import { config } from '../config';
 
 // the only images a message legitimately carries are emoji: custom ones served
 // from this server's /public path, and the github set, whose fallback images
@@ -9,14 +10,16 @@ const ALLOWED_IMAGE_HOSTS = ['cdn.jsdelivr.net'];
 const resolveImageSrc = (src?: string): string | null => {
   if (!src) return null;
 
-  if (src.startsWith('/public/')) return src;
+  const publicPrefix = `${config.server.basePath}/public/`;
+
+  if (src.startsWith(publicPrefix)) return src;
 
   try {
     const url = new URL(src);
 
     if (ALLOWED_IMAGE_HOSTS.includes(url.hostname)) return src;
 
-    if (url.pathname.startsWith('/public/'))
+    if (url.pathname.startsWith(publicPrefix))
       return `${url.pathname}${url.search}`;
 
     return null;

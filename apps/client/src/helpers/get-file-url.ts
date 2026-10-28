@@ -5,7 +5,9 @@ const getHostFromServer = () => {
     return 'localhost:4991';
   }
 
-  return window.location.host;
+  const basePath = (import.meta.env.BASE_URL ?? '/').replace(/\/+$/, '');
+
+  return `${window.location.host}${basePath}`;
 };
 
 const getUrlFromServer = () => {
@@ -13,7 +15,7 @@ const getUrlFromServer = () => {
     return 'http://localhost:4991';
   }
 
-  const host = window.location.host;
+  const host = getHostFromServer();
   const currentProtocol = window.location.protocol;
 
   const finalUrl = `${currentProtocol}//${host}`;

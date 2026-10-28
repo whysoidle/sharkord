@@ -2,6 +2,7 @@ import { getErrorMessage, OidcError } from '@sharkord/shared';
 import type http from 'http';
 import jwt from 'jsonwebtoken';
 import * as client from 'openid-client';
+import { config } from '../../config';
 import { getServerToken } from '../../db/queries/server';
 import type { getWsInfo } from '../../helpers/get-ws-info';
 import { OidcCallbackError } from '../../helpers/oidc/error';
@@ -148,6 +149,7 @@ const oidcCallbackRouteHandler = async (
       info?.ip
     );
     const target = new URL(origin);
+    target.pathname = `${config.server.basePath}/`;
 
     target.hash = `oidc=${handoffCode}`;
 

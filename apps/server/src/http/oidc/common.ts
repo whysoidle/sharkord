@@ -24,6 +24,7 @@ const redirectWithError = (
   extraHeaders: Record<string, string | string[]> = {}
 ) => {
   const target = new URL(getPublicOrigin(req));
+  target.pathname = `${config.server.basePath}/`;
 
   target.searchParams.set('oidc_error', error);
 

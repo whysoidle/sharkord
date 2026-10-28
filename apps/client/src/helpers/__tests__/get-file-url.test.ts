@@ -1,6 +1,10 @@
 import type { TFile } from '@sharkord/shared';
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { getFileUrl } from '../get-file-url';
+import {
+  getFileUrl,
+  getHostFromServer,
+  getUrlFromServer
+} from '../get-file-url';
 
 const getFile = (name: string, accessToken?: string): TFile =>
   ({
@@ -23,6 +27,26 @@ describe('getFileUrl', () => {
   test('should return an empty string without a file', () => {
     expect(getFileUrl(undefined)).toBe('');
   });
+
+  test.each(['/voice/', '/%D0%B3%D0%BE%D0%BB%D0%BE%D1%81/'])(
+    'keeps HTTP, WebSocket and attachment URLs under %s',
+    (basePath) => {
+      const previous = process.env.BASE_URL;
+      process.env.BASE_URL = basePath;
+
+      try {
+        const prefix = basePath.slice(0, -1);
+        expect(getHostFromServer()).toBe(`chat.example.com${prefix}`);
+        expect(getUrlFromServer()).toBe(`https://chat.example.com${prefix}`);
+        expect(getFileUrl(getFile('photo.png'))).toBe(
+          `https://chat.example.com${prefix}/public/photo.png`
+        );
+      } finally {
+        if (previous === undefined) delete process.env.BASE_URL;
+        else process.env.BASE_URL = previous;
+      }
+    }
+  );
 
   test('should encode a non ascii name', () => {
     const url = new URL(getFileUrl(getFile('Отчёт за март.png')));

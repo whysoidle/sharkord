@@ -1,0 +1,14 @@
+xn--80ababrm.xn--p1ai {
+    @voiceRoot path /голос
+    redir @voiceRoot /голос/ 308
+
+    handle_path /голос/* {
+        reverse_proxy 127.0.0.1:4991
+    }
+
+    handle {
+        reverse_proxy localhost:30000
+    }
+
+    encode zstd gzip
+}

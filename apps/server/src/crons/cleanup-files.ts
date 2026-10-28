@@ -1,9 +1,11 @@
 import chalk from 'chalk';
 import { removeFile } from '../db/mutations/files';
 import { getOrphanedFileIds } from '../db/queries/files';
+import { cleanupTempUploads } from '../helpers/cleanup-temp-uploads';
 import { logger } from '../logger';
 
 const cleanupFiles = async () => {
+  await cleanupTempUploads();
   logger.debug(`${chalk.dim('[Cron]')} Starting file cleanup...`);
 
   const orphanedFileIds = await getOrphanedFileIds();

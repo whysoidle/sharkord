@@ -1,11 +1,10 @@
 import { extractUrls, type TMessageMetadata } from '@sharkord/shared';
-import dns from 'dns';
 import { eq } from 'drizzle-orm';
-import { getLinkPreview } from 'link-preview-js';
 import { isIP } from 'net';
 import { db } from '../../db';
 import { messages } from '../../db/schema';
 import { isPrivateIP } from '../../helpers/network';
+import { fetchLinkPreview } from './fetch-link-preview';
 import {
   createDirectMediaMetadata,
   createOpenGraphMetadata,
@@ -14,6 +13,17 @@ import {
 } from './helpers';
 
 const metadataCache = new Map<string, TMessageMetadata | undefined>();
+const MAX_CACHE_ENTRIES = 256;
+const MAX_LINKS_PER_MESSAGE = 3;
+
+const cacheMetadata = (url: string, metadata: TMessageMetadata | undefined) => {
+  if (metadataCache.size >= MAX_CACHE_ENTRIES) {
+    const oldest = metadataCache.keys().next().value;
+    if (oldest !== undefined) metadataCache.delete(oldest);
+  }
+
+  metadataCache.set(url, metadata);
+};
 
 setInterval(
   () => metadataCache.clear(),
@@ -29,7 +39,11 @@ const urlMetadataParser = async (
 
     if (!urls) return [];
 
-    const promises = urls.map(async (url) => {
+    const uniqueUrls = Array.from(new Set(urls)).slice(
+      0,
+      MAX_LINKS_PER_MESSAGE
+    );
+    const promises = uniqueUrls.map(async (url) => {
       if (metadataCache.has(url)) return metadataCache.get(url);
 
       if (!URL.canParse(url)) {
@@ -66,7 +80,7 @@ const urlMetadataParser = async (
           mediaType
         );
 
-        metadataCache.set(url, directMetadata);
+        cacheMetadata(url, directMetadata);
 
         return directMetadata;
       }
@@ -74,41 +88,7 @@ const urlMetadataParser = async (
       let metadata;
 
       try {
-        metadata = await getLinkPreview(url, {
-          followRedirects: 'follow',
-          resolveDNSHost: async (url: string) => {
-            return new Promise((resolve, reject) => {
-              try {
-                const hostname = new URL(url).hostname;
-
-                dns.lookup(hostname, { all: true }, (err, addresses) => {
-                  if (err) {
-                    reject(err);
-                    return;
-                  }
-
-                  for (const entry of addresses) {
-                    if (isPrivateIP(entry.address)) {
-                      reject(new Error('Cannot resolve private IP addresses'));
-                      return;
-                    }
-                  }
-
-                  const firstAddress = addresses[0]?.address;
-
-                  if (!firstAddress) {
-                    reject(new Error('No addresses found'));
-                    return;
-                  }
-
-                  resolve(firstAddress);
-                });
-              } catch (error) {
-                reject(error);
-              }
-            });
-          }
-        });
+        metadata = await fetchLinkPreview(url);
       } catch {
         // getLinkPreview failed (blocked, timeout, etc.)
       }
@@ -117,7 +97,7 @@ const urlMetadataParser = async (
 
       const normalizedMetadata = createOpenGraphMetadata(metadata, url);
 
-      metadataCache.set(url, normalizedMetadata);
+      cacheMetadata(url, normalizedMetadata);
 
       return normalizedMetadata;
     });

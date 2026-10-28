@@ -108,7 +108,7 @@ class OidcManager {
   public resolveRedirectUri = (req: http.IncomingMessage): string => {
     if (config.oidc.redirectUri) return config.oidc.redirectUri;
 
-    return `${getPublicOrigin(req)}/oidc/callback`;
+    return `${getPublicOrigin(req)}${config.server.basePath}/oidc/callback`;
   };
 
   // logins in flight live in the database, so a restart in the middle of one does not

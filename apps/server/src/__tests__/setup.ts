@@ -4,6 +4,7 @@ import { drizzle, type BunSQLiteDatabase } from 'drizzle-orm/bun-sqlite';
 import fs from 'fs/promises';
 import path from 'path';
 import { migrateDatabase } from '../db/migrate';
+import { fileManager } from '../helpers/file-manager';
 import { DATA_PATH } from '../helpers/paths';
 import { clearVoiceMoveGrantsForTests } from '../helpers/voice-move-grants';
 import { createHttpServer } from '../http';
@@ -91,6 +92,7 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
+  await fileManager.clearTemporaryFiles();
   testLogs.length = 0;
 
   clearRateLimitersForTests();

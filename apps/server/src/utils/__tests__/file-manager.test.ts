@@ -1,14 +1,12 @@
 import {
   FileSaveType,
   StorageOverflowAction,
-  type TBeforeFileSavePayload,
-  type TTempFile
+  type TBeforeFileSavePayload
 } from '@sharkord/shared';
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { eq } from 'drizzle-orm';
 import fs from 'fs/promises';
 import path from 'path';
-import { getMockedToken, uploadFile } from '../../__tests__/helpers';
 import { tdb } from '../../__tests__/setup';
 import {
   files,
@@ -45,12 +43,14 @@ describe('file manager', () => {
 
   const addTempFile = async (content: string, userId: number = 2) => {
     const fileName = `quota-${Date.now()}-${Math.random()}.txt`;
-    const file = new File([content], fileName, { type: 'text/plain' });
-    const response = await uploadFile(file, await getMockedToken(userId));
-
-    expect(response.status).toBe(200);
-
-    const tempFile = (await response.json()) as TTempFile;
+    const filePath = path.join(UPLOADS_PATH, fileName);
+    await fs.writeFile(filePath, content);
+    const tempFile = await fileManager.addTemporaryFile({
+      filePath,
+      size: Buffer.byteLength(content),
+      originalName: fileName,
+      userId
+    });
 
     tempFilesToCleanup.push(tempFile.path);
 
@@ -94,6 +94,39 @@ describe('file manager', () => {
     expect(tempFile.path).toContain(tempFile.id);
 
     expect(await fs.exists(tempFile.path)).toBe(true);
+  });
+
+  test('hashes a multi-block file without reading the entire file into memory', async () => {
+    const content = Buffer.alloc(256 * 1024, 0xa5);
+    await fs.writeFile(testFilePath, content);
+    const read = spyOn(fs, 'readFile');
+    const temp = await fileManager.addTemporaryFile({
+      filePath: testFilePath,
+      size: content.length,
+      originalName: testFileName,
+      userId: 1
+    });
+
+    expect(temp.md5).toBe(Bun.CryptoHasher.hash('md5', content, 'hex'));
+    expect(
+      read.mock.calls.some(([filePath]) => filePath === testFilePath)
+    ).toBe(false);
+  });
+
+  test('releases the timer registry entry when a temporary file is removed', async () => {
+    const temp = await fileManager.addTemporaryFile({
+      filePath: testFilePath,
+      size: 17,
+      originalName: testFileName,
+      userId: 1
+    });
+    const manager = fileManager as unknown as {
+      tempFileManager: { timeouts: Record<string, unknown> };
+    };
+    expect(manager.tempFileManager.timeouts[temp.id]).toBeDefined();
+    await fileManager.removeTemporaryFile(temp.id);
+    expect(manager.tempFileManager.timeouts[temp.id]).toBeUndefined();
+    expect(fileManager.getTemporaryStorageUsage()).toBe(0);
   });
 
   test('should retrieve temporary file by id', async () => {
