@@ -39,7 +39,7 @@ jobs:
       - name: Build
         working-directory: apps/server
         env:
-          SHARKORD_BASE_PATH: /%D0%B3%D0%BE%D0%BB%D0%BE%D1%81
+          SHARKORD_BASE_PATH: /voice
         run: bun run build --target bun-linux-x64-baseline
 
       - name: Save VPS binary

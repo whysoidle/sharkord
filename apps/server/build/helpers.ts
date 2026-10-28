@@ -72,7 +72,7 @@ const downloadMediasoupBinary = async (
       throw new Error(`Unsupported target for mediasoup binary: ${target}`);
   }
 
-  const response = await fetch(url);
+  const response = await fetch(url, { signal: AbortSignal.timeout(60_000) });
 
   if (!response.ok) {
     throw new Error(

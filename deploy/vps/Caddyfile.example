@@ -1,8 +1,8 @@
 xn--80ababrm.xn--p1ai {
-    @voiceRoot path /голос
-    redir @voiceRoot /голос/ 308
+    @voiceRoot path /voice
+    redir @voiceRoot /voice/ 308
 
-    handle_path /голос/* {
+    handle_path /voice/* {
         reverse_proxy 127.0.0.1:4991
     }
 
