@@ -40,11 +40,11 @@ jobs:
         working-directory: apps/server
         env:
           SHARKORD_BASE_PATH: /%D0%B3%D0%BE%D0%BB%D0%BE%D1%81
-        run: bun run build --target bun-linux-x64
+        run: bun run build --target bun-linux-x64-baseline
 
       - name: Save VPS binary
         uses: actions/upload-artifact@v4
         with:
           name: sharkord-linux-x64
-          path: apps/server/build/out/sharkord-linux-x64
+          path: apps/server/build/out/sharkord-linux-x64-baseline
           retention-days: 14

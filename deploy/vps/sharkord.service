@@ -25,6 +25,7 @@ OOMPolicy=kill
 CPUWeight=50
 IOWeight=50
 UMask=0077
+LimitCORE=0
 NoNewPrivileges=true
 PrivateTmp=true
 PrivateDevices=true

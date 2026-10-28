@@ -52,6 +52,7 @@ const downloadMediasoupBinary = async (
 
   switch (target) {
     case 'bun-linux-x64':
+    case 'bun-linux-x64-baseline':
       url += `mediasoup-worker-${version}-linux-x64-kernel6.tgz`;
       fileName = 'mediasoup-worker';
       break;
@@ -189,7 +190,7 @@ const getVersionInfo = async (
 
     artifacts.push({
       name: path.basename(artifactPath),
-      target: target.target.replace('bun-', ''),
+      target: target.target.replace('bun-', '').replace('-baseline', ''),
       size: (await fs.stat(artifactPath)).size,
       checksum: await getFileChecksum(artifactPath)
     });

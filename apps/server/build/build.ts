@@ -85,6 +85,7 @@ console.log('Compiling server with Bun...');
 
 const availableTargets: TTarget[] = [
   { out: 'sharkord-linux-x64', target: 'bun-linux-x64' },
+  { out: 'sharkord-linux-x64-baseline', target: 'bun-linux-x64-baseline' },
   { out: 'sharkord-linux-arm64', target: 'bun-linux-arm64' },
   { out: 'sharkord-windows-x64.exe', target: 'bun-windows-x64' },
   { out: 'sharkord-macos-arm64', target: 'bun-darwin-arm64' }

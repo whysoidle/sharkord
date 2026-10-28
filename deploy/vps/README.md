@@ -5,7 +5,7 @@ This fork supports running under `/голос/`. Build the browser client with t
 ```sh
 bun install --frozen-lockfile
 cd apps/server
-SHARKORD_BASE_PATH=/%D0%B3%D0%BE%D0%BB%D0%BE%D1%81 bun run build --target bun-linux-x64
+SHARKORD_BASE_PATH=/%D0%B3%D0%BE%D0%BB%D0%BE%D1%81 bun run build --target bun-linux-x64-baseline
 ```
 
 Build outside the VPS. Install the resulting executable as `/opt/sharkord/releases/<commit>/sharkord`, owned by root, and point `/opt/sharkord/current` at that release. Create a system user named `sharkord` with `/var/lib/sharkord` as its home and no login shell. Install `sharkord.service` under `/etc/systemd/system/` and copy `sharkord.env.example` to `/etc/sharkord.env` with permissions 0600. Review the domain, address, limits and existing Caddy configuration before applying the example.
