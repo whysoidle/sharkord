@@ -1,0 +1,113 @@
+name: Native Clients
+
+on:
+  push:
+    tags: ['client-v*']
+  workflow_dispatch:
+  pull_request:
+    paths: ['apps/native/**', '.github/workflows/native-clients.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: bun install --frozen-lockfile
+      - run: bun run --filter '@sharkord/native' build
+      - run: bun run check-types
+      - name: Install browser
+        working-directory: packages/e2e
+        run: node node_modules/@playwright/test/cli.js install --with-deps chromium
+      - name: Check native browser integration and themes
+        working-directory: packages/e2e
+        env:
+          SHARKORD_WEBRTC_ANNOUNCED_ADDRESS: 127.0.0.1
+        run: |
+          bun run seed:e2e
+          node node_modules/@playwright/test/cli.js test native-shell.pw.ts themes.pw.ts --workers=1 --reporter=line
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - run: bun run --filter '@sharkord/native' build
+      - name: Test native server and update policies
+        working-directory: apps/native/macos
+        run: swift test
+      - name: Build universal macOS application
+        working-directory: apps/native
+        run: bun run build:macos
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-macos
+          path: apps/native/dist/Sharkord-macos-universal.zip
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - run: bun install --frozen-lockfile
+      - run: bun run --filter '@sharkord/native' build
+      - name: Test native server and update policies
+        run: dotnet run --project apps/native/windows-tests -c Release
+      - name: Test updater file replacement
+        shell: pwsh
+        run: ./apps/native/windows-tests/UpdaterTransaction.ps1
+      - name: Build Windows application
+        shell: pwsh
+        run: |
+          $version = (Get-Content apps/native/client-config.json | ConvertFrom-Json).version
+          dotnet publish apps/native/windows/Sharkord.csproj -c Release -r win-x64 --self-contained true -p:Version=$version -o apps/native/dist/windows
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Compress-Archive -Path apps/native/dist/windows/* -DestinationPath apps/native/dist/Sharkord-windows-x64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-windows
+          path: apps/native/dist/Sharkord-windows-x64.zip
+  release:
+    if: startsWith(github.ref, 'refs/tags/client-v')
+    needs: [checks, macos, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: native-*
+          path: native-release
+          merge-multiple: true
+      - name: Validate version and create update manifest
+        working-directory: apps/native
+        env:
+          CLIENT_TAG: ${{ github.ref_name }}
+        run: |
+          version=$(bun -e "console.log((await Bun.file('client-config.json').json()).version)")
+          test "$CLIENT_TAG" = "client-v$version"
+          bun run scripts/release-manifest.ts ../../native-release
+      - name: Publish native applications
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLIENT_TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$CLIENT_TAG" native-release/* --title "Sharkord Client ${CLIENT_TAG#client-v}" --notes-file apps/native/RELEASE.md --latest=false

@@ -41,6 +41,9 @@ jobs:
       - name: Install dependencies
         run: bun install
 
+      - name: Build native client assets for browser tests
+        run: bun run --filter '@sharkord/native' build
+
       - name: Install Playwright browsers
         working-directory: packages/e2e
         run: bunx playwright install

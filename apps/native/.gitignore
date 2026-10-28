@@ -1,0 +1,13 @@
+node_modules/
+dist/
+macos/.build/
+macos/.swiftpm/
+macos/Sources/Sharkord/Resources/client.js
+macos/Sources/Sharkord/Resources/client-config.json
+windows/Assets/client.js
+windows/Assets/client-config.json
+windows/Assets/LICENSES.txt
+windows/bin/
+windows/obj/
+windows-tests/bin/
+windows-tests/obj/
