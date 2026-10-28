@@ -552,5 +552,10 @@
   "hotkeysSaved": "Impostazioni delle scorciatoie salvate",
   "failedSaveHotkeys": "Impossibile salvare le impostazioni delle scorciatoie",
   "hotkeysBridgeFailed": "Non trovato, tentativi interrotti",
-  "hotkeysBridgeRetry": "Prova a connettere"
+  "hotkeysBridgeRetry": "Prova a connettere",
+  "themeLabel": "Tema",
+  "themeDesc": "La scelta viene salvata in questo browser.",
+  "themeSystem": "Sistema",
+  "themeDark": "Scuro",
+  "themeLight": "Chiaro"
 }

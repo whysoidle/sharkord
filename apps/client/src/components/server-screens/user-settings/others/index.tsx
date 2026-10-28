@@ -1,6 +1,7 @@
 import { LanguageSwitcher } from '@/components/language-switcher';
 import { SettingsSection } from '@/components/server-screens/settings-shell/section';
 import { useSettingsForm } from '@/components/server-screens/settings-shell/use-settings-form';
+import { ThemeSwitcher } from '@/components/theme-switcher';
 import { setAutoJoinLastChannel } from '@/features/app/actions';
 import { useAutoJoinLastChannel } from '@/features/app/hooks';
 import { Group, Switch } from '@sharkord/ui';
@@ -33,6 +34,9 @@ const Others = memo(() => {
 
   return (
     <SettingsSection title={t('othersTitle')} description={t('othersDesc')}>
+      <Group label={t('themeLabel')} description={t('themeDesc')}>
+        <ThemeSwitcher />
+      </Group>
       <Group
         label={t('autoJoinLastChannelLabel')}
         description={t('autoJoinLastChannelDesc')}

@@ -1,5 +1,4 @@
 import { i18nReady } from '@/i18n';
-import { Toaster } from '@sharkord/ui';
 import 'prosemirror-view/style/prosemirror.css';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -16,27 +15,30 @@ import { AutoLoginController } from './components/routing/auto-login-controller.
 import { Routing } from './components/routing/index.tsx';
 import { ServerScreensProvider } from './components/server-screens/index.tsx';
 import { ThemeProvider } from './components/theme-provider/index.tsx';
+import { ThemedToaster } from './components/theme-provider/themed-toaster.tsx';
 import { exposePluginStore } from './features/server/plugins/plugin-store.ts';
 import { store } from './features/store.ts';
 import { exposeLibs, exposeReact } from './helpers/exposes.ts';
 import { LocalStorageKey } from './helpers/storage.ts';
+import { applyTheme, getStoredTheme } from './helpers/theme.ts';
 import './index.css';
 
 exposeReact();
 exposeLibs();
 exposePluginStore();
+applyTheme(getStoredTheme());
 
 await i18nReady;
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ThemeProvider
-      defaultTheme="dark"
+      defaultTheme="system"
       storageKey={LocalStorageKey.VITE_UI_THEME}
     >
       <GlobalErrorBoundary>
         <DebugInfo />
-        <Toaster />
+        <ThemedToaster />
         <Provider store={store}>
           <StoreDebug />
           <KeyboardController />

@@ -1,3 +1,4 @@
+import { ThemeSwitcher } from '@/components/theme-switcher';
 import {
   useCurrentVoiceChannelId,
   useIsCurrentVoiceChannelSelected
@@ -25,7 +26,9 @@ const TopBar = memo(({ onToggleRightSidebar, isOpen }: TTopBarProps) => {
 
   return (
     <div className="hidden lg:grid h-12 w-full grid-cols-[1fr_minmax(320px,1.4fr)_1fr] items-center border-b border-border bg-card px-4 transition-all duration-300 ease-in-out gap-2">
-      <div className="flex min-w-0 items-center gap-2" />
+      <div className="flex min-w-0 items-center gap-2">
+        <ThemeSwitcher />
+      </div>
 
       <div className="flex items-center justify-center">
         {settings?.enableSearch && <ServerSearch />}

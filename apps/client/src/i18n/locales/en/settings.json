@@ -554,5 +554,10 @@
   "hotkeysSaved": "Hotkey settings saved",
   "failedSaveHotkeys": "Failed to save hotkey settings",
   "hotkeysBridgeFailed": "Not found, stopped trying",
-  "hotkeysBridgeRetry": "Try to connect"
+  "hotkeysBridgeRetry": "Try to connect",
+  "themeLabel": "Theme",
+  "themeDesc": "Your choice is saved in this browser.",
+  "themeSystem": "System",
+  "themeDark": "Dark",
+  "themeLight": "Light"
 }

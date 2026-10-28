@@ -561,5 +561,10 @@
   "hotkeysSaved": "Настройки горячих клавиш сохранены",
   "failedSaveHotkeys": "Не удалось сохранить настройки горячих клавиш",
   "hotkeysBridgeFailed": "Не найден, попытки прекращены",
-  "hotkeysBridgeRetry": "Попробовать подключиться"
+  "hotkeysBridgeRetry": "Попробовать подключиться",
+  "themeLabel": "Тема",
+  "themeDesc": "Выбор сохраняется в этом браузере.",
+  "themeSystem": "Системная",
+  "themeDark": "Тёмная",
+  "themeLight": "Светлая"
 }

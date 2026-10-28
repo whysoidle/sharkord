@@ -16,7 +16,7 @@ const VideoPlayer = memo(({ url, className }: TVideoPlayerProps) => {
         width="100%"
         height="100%"
         style={{
-          colorScheme: 'dark'
+          colorScheme: 'inherit'
         }}
       />
     </div>

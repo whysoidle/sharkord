@@ -1,5 +1,6 @@
 import { LanguageSwitcher } from '@/components/language-switcher';
 import { PluginSlotRenderer } from '@/components/plugin-slot-renderer';
+import { ThemeSwitcher } from '@/components/theme-switcher';
 import { connect } from '@/features/server/actions';
 import { useInfo } from '@/features/server/hooks';
 import { getFileUrl, getUrlFromServer } from '@/helpers/get-file-url';
@@ -174,7 +175,8 @@ const Connect = memo(() => {
 
   return (
     <div className="flex flex-col gap-2 justify-center items-center h-full relative">
-      <div className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-50">
+      <div className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-50 flex max-w-[calc(100vw-2rem)] flex-wrap justify-end gap-2">
+        <ThemeSwitcher />
         <LanguageSwitcher variant="icon" />
       </div>
       <Card className="w-full max-w-sm">

@@ -554,5 +554,10 @@
   "hotkeysSaved": "Configurações de atalhos salvas",
   "failedSaveHotkeys": "Falha ao salvar as configurações de atalhos",
   "hotkeysBridgeFailed": "Não encontrado, parou de tentar",
-  "hotkeysBridgeRetry": "Tentar conectar"
+  "hotkeysBridgeRetry": "Tentar conectar",
+  "themeLabel": "Tema",
+  "themeDesc": "Sua escolha é salva neste navegador.",
+  "themeSystem": "Sistema",
+  "themeDark": "Escuro",
+  "themeLight": "Claro"
 }

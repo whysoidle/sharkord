@@ -552,5 +552,10 @@
   "hotkeysSaved": "Nastavení klávesových zkratek uloženo",
   "failedSaveHotkeys": "Nepodařilo se uložit nastavení klávesových zkratek",
   "hotkeysBridgeFailed": "Nenalezeno, přestalo se zkoušet",
-  "hotkeysBridgeRetry": "Zkusit připojit"
+  "hotkeysBridgeRetry": "Zkusit připojit",
+  "themeLabel": "Motiv",
+  "themeDesc": "Vaše volba se ukládá v tomto prohlížeči.",
+  "themeSystem": "Systémový",
+  "themeDark": "Tmavý",
+  "themeLight": "Světlý"
 }

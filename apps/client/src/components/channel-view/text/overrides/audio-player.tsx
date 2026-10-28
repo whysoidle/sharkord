@@ -16,7 +16,7 @@ const AudioPlayer = memo(({ url, className }: TAudioPlayerProps) => {
         width="100%"
         height="54px"
         style={{
-          colorScheme: 'dark'
+          colorScheme: 'inherit'
         }}
       />
     </div>
