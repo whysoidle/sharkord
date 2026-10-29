@@ -13,9 +13,11 @@ const bytesReceived = (snapshot) =>
 if (phase === 'setup') {
   const NativePeer = window.RTCPeerConnection;
   window.__nativePeerEvents = [];
+  window.__nativePeers = [];
   window.RTCPeerConnection = class extends NativePeer {
     constructor(...args) {
       super(...args);
+      window.__nativePeers.push(this);
       for (const name of [
         'connectionstatechange',
         'iceconnectionstatechange',
@@ -101,9 +103,11 @@ if (phase === 'join') {
 if (phase === 'check') {
   let previousBytes;
   let snapshot;
+  let lastActiveSnapshot;
   for (let attempt = 0; attempt < 80; attempt += 1) {
     await delay(200);
     snapshot = await collectVoiceDebugSnapshot();
+    if (snapshot.transports.length) lastActiveSnapshot = snapshot;
     const bytes = bytesReceived(snapshot);
     if (
       snapshot.transports.length === 2 &&
@@ -130,7 +134,18 @@ if (phase === 'check') {
   }
   return JSON.stringify({
     passed: false,
-    snapshot,
+    snapshot: lastActiveSnapshot ?? snapshot,
+    visibility: document.visibilityState,
+    focused: document.hasFocus(),
+    peers: window.__nativePeers.map((peer) => ({
+      localCandidates: peer.localDescription?.sdp
+        .split('\r\n')
+        .filter((line) => line.startsWith('a=candidate:')).length,
+      remoteAddresses: peer.remoteDescription?.sdp
+        .split('\r\n')
+        .filter((line) => line.startsWith('a=candidate:'))
+        .map((line) => line.split(' ')[4])
+    })),
     events: getVoiceDebugEvents(),
     peerEvents: window.__nativePeerEvents
   });

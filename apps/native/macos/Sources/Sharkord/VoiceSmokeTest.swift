@@ -12,11 +12,21 @@ extension AppDelegate {
             return
         }
         let peer = BrowserModel()
-        let peerWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1180, height: 800),
+        let visible = model.webView.window?.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1200, height: 800)
+        let width = min(780, visible.width - 80)
+        let height = min(700, visible.height - 80)
+        let peerWindow = NSWindow(contentRect: NSRect(x: visible.maxX - width, y: visible.minY, width: width, height: height),
                                   styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
         peerWindow.isReleasedWhenClosed = false
         peerWindow.contentView = peer.webView
-        peerWindow.orderBack(nil)
+        // keep both WebKit clients visible and active while negotiating ICE.
+        if let window = model.webView.window {
+            window.setContentSize(NSSize(width: width, height: height))
+            window.setFrameOrigin(NSPoint(x: visible.minX, y: visible.minY))
+            window.makeKeyAndOrderFront(nil)
+        }
+        peerWindow.orderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
         defer {
             peer.webView.stopLoading()
             peerWindow.close()
