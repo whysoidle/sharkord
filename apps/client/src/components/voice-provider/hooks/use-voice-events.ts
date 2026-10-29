@@ -10,6 +10,14 @@ import { useEffect } from 'react';
 import { isOwnProducerEvent } from '../helpers';
 
 type TEvents = {
+  closeConsumer: (
+    remoteId: number,
+    kind: StreamKind,
+    producerId?: string
+  ) => boolean;
+  closeUserConsumers: (remoteId: number) => void;
+  consumeExistingProducers: (capabilities: RtpCapabilities) => Promise<void>;
+  mediaRevision: number;
   consume: (
     remoteId: number,
     kind: StreamKind,
@@ -30,6 +38,10 @@ type TEvents = {
 };
 
 const useVoiceEvents = ({
+  closeConsumer,
+  closeUserConsumers,
+  consumeExistingProducers,
+  mediaRevision,
   consume,
   removeRemoteUserStream,
   removeExternalStreamTrack,
@@ -61,6 +73,13 @@ const useVoiceEvents = ({
     const onVoiceNewProducerSub = trpc.voice.onNewProducer.subscribe(
       undefined,
       {
+        onStarted: () => {
+          const capabilities = rtpCapabilitiesRef.current;
+          if (isCleaningUp || !capabilities) return;
+          consumeExistingProducers(capabilities).catch((error) => {
+            voiceLogger.error('events: producer snapshot failed', error);
+          });
+        },
         onData: ({ remoteId, kind, channelId }) => {
           if (currentVoiceChannelId !== channelId || isCleaningUp) return;
 
@@ -114,7 +133,7 @@ const useVoiceEvents = ({
     const onVoiceProducerClosedSub = trpc.voice.onProducerClosed.subscribe(
       undefined,
       {
-        onData: ({ channelId, remoteId, kind }) => {
+        onData: ({ channelId, remoteId, kind, producerId }) => {
           if (currentVoiceChannelId !== channelId || isCleaningUp) return;
 
           voiceLogger.info('events: producer closed', {
@@ -124,6 +143,7 @@ const useVoiceEvents = ({
           });
 
           try {
+            if (!closeConsumer(remoteId, kind, producerId)) return;
             if (
               kind === StreamKind.EXTERNAL_VIDEO ||
               kind === StreamKind.EXTERNAL_AUDIO
@@ -156,6 +176,7 @@ const useVoiceEvents = ({
         voiceLogger.info('events: user left voice', { userId, channelId });
 
         try {
+          closeUserConsumers(userId);
           clearRemoteUserStreamsForUser(userId);
         } catch (error) {
           voiceLogger.error('events: clearing streams for user failed', error, {
@@ -179,6 +200,7 @@ const useVoiceEvents = ({
           });
 
           try {
+            closeUserConsumers(streamId);
             removeExternalStream(streamId);
           } catch (error) {
             voiceLogger.error(
@@ -210,9 +232,13 @@ const useVoiceEvents = ({
       onVoiceRemoveExternalStreamSub.unsubscribe();
     };
   }, [
+    closeConsumer,
+    closeUserConsumers,
+    mediaRevision,
     currentVoiceChannelId,
     ownUserId,
     consume,
+    consumeExistingProducers,
     removeRemoteUserStream,
     removeExternalStreamTrack,
     removeExternalStream,

@@ -30,6 +30,7 @@ let wsClient: ReturnType<typeof createWSClient> | null = null;
 let trpc: ReturnType<typeof createTRPCProxyClient<AppRouter>> | null = null;
 let currentHost: string | null = null;
 let isCleaningUp = false;
+let connectionGeneration = 0;
 
 // Firefox fires WebSocket onClose during page refresh; Chrome does not. When navigating away,
 // we must not clear auto-login localStorage or it will be lost on refresh in Firefox.
@@ -42,6 +43,7 @@ const isTerminalClose = (code: number) =>
   code === DisconnectCode.KICKED || code === DisconnectCode.BANNED;
 
 const initializeTRPC = (host: string) => {
+  const generation = ++connectionGeneration;
   const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
 
   wsClient = createWSClient({
@@ -54,6 +56,7 @@ const initializeTRPC = (host: string) => {
     },
     // @ts-expect-error - the onclose type is not correct in trpc
     onClose: (cause?: CloseEvent) => {
+      if (generation !== connectionGeneration) return;
       const info = {
         code: cause?.code ?? DisconnectCode.UNEXPECTED,
         reason: cause?.reason ?? '',
@@ -123,6 +126,7 @@ const getTRPCClient = () => {
 };
 
 const closeClient = () => {
+  connectionGeneration += 1;
   if (wsClient) {
     wsClient.close();
     wsClient = null;
@@ -167,4 +171,4 @@ const cleanup = () => {
 
 export type TRouterOutputs = inferRouterOutputs<AppRouter>;
 
-export { cleanup, connectToTRPC, getTRPCClient, type AppRouter };
+export { cleanup, closeClient, connectToTRPC, getTRPCClient, type AppRouter };

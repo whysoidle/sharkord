@@ -22,6 +22,7 @@ import { joinVoiceRoute } from './join';
 import { leaveVoiceRoute } from './leave';
 import { moveUserRoute } from './move';
 import { produceRoute } from './produce';
+import { restartIceRoute } from './restart-ice';
 import { sendVoiceReactionRoute } from './send-reaction';
 import { setConsumerQualityRoute } from './set-consumer-quality';
 import { updateVoiceStateRoute } from './update-state';
@@ -29,6 +30,7 @@ import { updateVoiceStateRoute } from './update-state';
 export const voiceRouter = t.router({
   join: joinVoiceRoute,
   leave: leaveVoiceRoute,
+  restartIce: restartIceRoute,
   moveUser: moveUserRoute,
   updateState: updateVoiceStateRoute,
   sendReaction: sendVoiceReactionRoute,

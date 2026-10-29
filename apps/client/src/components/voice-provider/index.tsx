@@ -16,6 +16,8 @@ import {
 import { createNsChain } from '@/helpers/audio-worklet/ns-worklet';
 import { playSound } from '@/helpers/sounds';
 
+import { voiceSessionIdSelector } from '@/features/server/voice/selectors';
+import { store } from '@/features/store';
 import { voiceLogger } from '@/helpers/browser-logger';
 import {
   getRestrictOwnAudioSupport,
@@ -23,6 +25,7 @@ import {
 } from '@/helpers/get-display-media-support';
 import { getResWidthHeight } from '@/helpers/get-res-with-height';
 import { registerVoiceDebugSource } from '@/helpers/voice-debug';
+import { withTimeout } from '@/helpers/with-timeout';
 import { useScreenShareSupport } from '@/hooks/use-screen-share-support';
 import { getTRPCClient } from '@/lib/trpc';
 import { NoiseSuppression, VideoCodec, type TStreamQuality } from '@/types';
@@ -76,6 +79,7 @@ import { useTransports } from './hooks/use-transports';
 import { useVoiceControls } from './hooks/use-voice-controls';
 import { useVoiceEvents } from './hooks/use-voice-events';
 import { useVoiceHotkeys } from './hooks/use-voice-hotkeys';
+import { useVoiceRecovery } from './hooks/use-voice-recovery';
 import { SIMULCAST_WEBCAM_MAX_BITRATE } from './statics';
 import { VoiceStatsContext } from './stats-context';
 import { VolumeControlProvider } from './volume-control-context';
@@ -193,6 +197,10 @@ const VoiceProvider = memo(({ children }: TVoiceProviderProps) => {
   const deviceRtpCapabilities = useRef<RtpCapabilities | null>(null);
   const audioVideoRefsMap = useRef<Map<TRefsKey, AudioVideoRefs>>(new Map());
   const previousVoiceChannelIdRef = useRef<number | undefined>(undefined);
+  const initializationGeneration = useRef(0);
+  const recoveryCallback = useRef<() => void>(() => {});
+  const [mediaRevision, setMediaRevision] = useState(0);
+  const onRecoveryNeeded = useCallback(() => recoveryCallback.current(), []);
   const [streamQualities, setStreamQualities] =
     useState<TStreamQualitySettings>(loadStreamQualitiesFromStorage);
   const [remoteConsumerTypes, setRemoteConsumerTypes] =
@@ -396,8 +404,13 @@ const VoiceProvider = memo(({ children }: TVoiceProviderProps) => {
     consume,
     consumeExistingProducers,
     cleanupTransports,
-    getConsumerCodec
+    getConsumerCodec,
+    restartIce,
+    waitForConnection,
+    closeConsumer,
+    closeUserConsumers
   } = useTransports({
+    onRecoveryNeeded,
     addExternalStreamTrack,
     removeExternalStreamTrack,
     addRemoteUserStream,
@@ -485,217 +498,249 @@ const VoiceProvider = memo(({ children }: TVoiceProviderProps) => {
     });
   }, [devices.noiseGateThresholdDb]);
 
-  const startMicStream = useCallback(async () => {
-    try {
-      voiceLogger.info('mic: starting');
-      cleanupMicProcessingResources();
-
-      const useNsChain =
-        devices.noiseSuppression === NoiseSuppression.DTLN ||
-        devices.noiseSuppression === NoiseSuppression.RNNOISE;
-      const useStandardNs =
-        devices.noiseSuppression === NoiseSuppression.STANDARD;
-      const useDtln = devices.noiseSuppression === NoiseSuppression.DTLN;
-
-      const hasSpecificMic =
-        !!devices.microphoneId && devices.microphoneId !== 'default';
-
-      const micStreamConstraints: MediaStreamConstraints = {
-        audio: {
-          deviceId: hasSpecificMic
-            ? { exact: devices.microphoneId }
-            : undefined,
-          autoGainControl: devices.autoGainControl,
-          echoCancellation: devices.echoCancellation,
-          noiseSuppression: useStandardNs,
-          sampleRate: useDtln ? 16000 : undefined,
-          channelCount: 1
-        },
-        video: false
+  const startMicStream = useCallback(
+    async (signal?: AbortSignal) => {
+      const sending = producerTransport.current;
+      let acquired: MediaStream | undefined;
+      const assertCurrent = () => {
+        signal?.throwIfAborted();
+        if (sending !== producerTransport.current || !sending || sending.closed)
+          throw new DOMException('Voice transport changed', 'AbortError');
       };
+      try {
+        voiceLogger.info('mic: starting');
+        cleanupMicProcessingResources();
 
-      voiceLogger.info('mic: requesting stream', {
-        constraints: micStreamConstraints
-      });
+        const useNsChain =
+          devices.noiseSuppression === NoiseSuppression.DTLN ||
+          devices.noiseSuppression === NoiseSuppression.RNNOISE;
+        const useStandardNs =
+          devices.noiseSuppression === NoiseSuppression.STANDARD;
+        const useDtln = devices.noiseSuppression === NoiseSuppression.DTLN;
 
-      const rawStream =
-        await navigator.mediaDevices.getUserMedia(micStreamConstraints);
+        const hasSpecificMic =
+          !!devices.microphoneId && devices.microphoneId !== 'default';
 
-      voiceLogger.info('mic: stream obtained', {
-        trackId: rawStream.getAudioTracks()[0]?.id,
-        label: rawStream.getAudioTracks()[0]?.label
-      });
+        const micStreamConstraints: MediaStreamConstraints = {
+          audio: {
+            deviceId: hasSpecificMic
+              ? { exact: devices.microphoneId }
+              : undefined,
+            autoGainControl: devices.autoGainControl,
+            echoCancellation: devices.echoCancellation,
+            noiseSuppression: useStandardNs,
+            sampleRate: useDtln ? 16000 : undefined,
+            channelCount: 1
+          },
+          video: false
+        };
 
-      rawMicrophoneStreamRef.current = rawStream;
+        voiceLogger.info('mic: requesting stream', {
+          constraints: micStreamConstraints
+        });
 
-      const rawAudioTrack = rawStream.getAudioTracks()[0];
+        const rawStream =
+          await navigator.mediaDevices.getUserMedia(micStreamConstraints);
+        acquired = rawStream;
+        assertCurrent();
 
-      if (rawAudioTrack) {
-        const shouldUseNoiseGate = !!devices.noiseGateEnabled;
-        const noiseGateAvailability = getNoiseGateWorkletAvailabilitySnapshot();
-        let transmitTrack: MediaStreamTrack = rawAudioTrack;
-        let transmitStream: MediaStream = rawStream;
+        voiceLogger.info('mic: stream obtained', {
+          trackId: rawStream.getAudioTracks()[0]?.id,
+          label: rawStream.getAudioTracks()[0]?.label
+        });
 
-        if (shouldUseNoiseGate && noiseGateAvailability.available) {
-          let audioContext: AudioContext | null = null;
+        rawMicrophoneStreamRef.current = rawStream;
 
-          try {
-            audioContext = new window.AudioContext();
-            const source = audioContext.createMediaStreamSource(rawStream);
-            const noiseGateNode = await createNoiseGateWorkletNode(
-              audioContext,
-              {
-                enabled: true,
-                thresholdDb: clampMicrophoneDecibels(
-                  devices.noiseGateThresholdDb ??
-                    MICROPHONE_GATE_DEFAULT_THRESHOLD_DB
-                ),
-                holdMs: MICROPHONE_GATE_CLOSE_HOLD_MS
+        const rawAudioTrack = rawStream.getAudioTracks()[0];
+
+        if (rawAudioTrack) {
+          const shouldUseNoiseGate = !!devices.noiseGateEnabled;
+          const noiseGateAvailability =
+            getNoiseGateWorkletAvailabilitySnapshot();
+          let transmitTrack: MediaStreamTrack = rawAudioTrack;
+          let transmitStream: MediaStream = rawStream;
+
+          if (shouldUseNoiseGate && noiseGateAvailability.available) {
+            let audioContext: AudioContext | null = null;
+
+            try {
+              audioContext = new window.AudioContext();
+              const source = audioContext.createMediaStreamSource(rawStream);
+              const noiseGateNode = await createNoiseGateWorkletNode(
+                audioContext,
+                {
+                  enabled: true,
+                  thresholdDb: clampMicrophoneDecibels(
+                    devices.noiseGateThresholdDb ??
+                      MICROPHONE_GATE_DEFAULT_THRESHOLD_DB
+                  ),
+                  holdMs: MICROPHONE_GATE_CLOSE_HOLD_MS
+                }
+              );
+              const destination = audioContext.createMediaStreamDestination();
+
+              source.connect(noiseGateNode);
+              noiseGateNode.connect(destination);
+
+              const processedTrack = destination.stream.getAudioTracks()[0];
+
+              if (processedTrack) {
+                microphoneNoiseGateAudioContextRef.current = audioContext;
+                microphoneNoiseGateWorkletNodeRef.current = noiseGateNode;
+                transmitTrack = processedTrack;
+                transmitStream = destination.stream;
+              } else {
+                noiseGateNode.disconnect();
+                audioContext.close();
+                audioContext = null;
+                voiceLogger.warn(
+                  'mic: noise gate produced no track, using ungated stream'
+                );
               }
-            );
-            const destination = audioContext.createMediaStreamDestination();
+            } catch (error) {
+              if (audioContext) {
+                audioContext.close();
+              }
+              if (signal?.aborted || sending !== producerTransport.current)
+                throw error;
 
-            source.connect(noiseGateNode);
-            noiseGateNode.connect(destination);
-
-            const processedTrack = destination.stream.getAudioTracks()[0];
-
-            if (processedTrack) {
-              microphoneNoiseGateAudioContextRef.current = audioContext;
-              microphoneNoiseGateWorkletNodeRef.current = noiseGateNode;
-              transmitTrack = processedTrack;
-              transmitStream = destination.stream;
-            } else {
-              noiseGateNode.disconnect();
-              audioContext.close();
-              audioContext = null;
-              voiceLogger.warn(
-                'mic: noise gate produced no track, using ungated stream'
+              voiceLogger.error(
+                'mic: noise gate worklet failed, using ungated stream',
+                error
+              );
+              markNoiseGateWorkletUnavailable(
+                'Failed to initialize the noise gate audio processor.'
               );
             }
-          } catch (error) {
-            if (audioContext) {
-              audioContext.close();
-            }
-
-            voiceLogger.error(
-              'mic: noise gate worklet failed, using ungated stream',
-              error
-            );
-            markNoiseGateWorkletUnavailable(
-              'Failed to initialize the noise gate audio processor.'
+          } else if (shouldUseNoiseGate && !noiseGateAvailability.available) {
+            voiceLogger.warn(
+              'mic: noise gate unavailable, using ungated stream',
+              {
+                reason: noiseGateAvailability.reason
+              }
             );
           }
-        } else if (shouldUseNoiseGate && !noiseGateAvailability.available) {
-          voiceLogger.warn(
-            'mic: noise gate unavailable, using ungated stream',
-            {
-              reason: noiseGateAvailability.reason
-            }
-          );
-        }
 
-        if (useNsChain) {
-          voiceLogger.info('mic: setting up noise suppression', {
-            type: devices.noiseSuppression
+          if (useNsChain) {
+            voiceLogger.info('mic: setting up noise suppression', {
+              type: devices.noiseSuppression
+            });
+
+            try {
+              const chain = await createNsChain(
+                devices.noiseSuppression,
+                transmitStream
+              );
+              if (signal?.aborted || sending !== producerTransport.current) {
+                chain.outputTrack.stop();
+                chain.contexts.forEach((context) => {
+                  context.close();
+                });
+                assertCurrent();
+              }
+              nsAudioContextsRef.current = chain.contexts;
+              transmitTrack = chain.outputTrack;
+              transmitStream = new MediaStream([chain.outputTrack]);
+              voiceLogger.info('mic: noise suppression ready');
+            } catch (nsError) {
+              voiceLogger.warn('mic: noise suppression setup failed', {
+                error: nsError
+              });
+            }
+          }
+
+          assertCurrent();
+          transmitMicrophoneTrackRef.current = transmitTrack;
+          setLocalAudioStream(transmitStream);
+          syncTransmitMicrophoneTrackState();
+
+          voiceLogger.info('mic: audio track obtained', {
+            trackId: rawAudioTrack.id,
+            readyState: rawAudioTrack.readyState,
+            settings: rawAudioTrack.getSettings()
           });
 
-          try {
-            const chain = await createNsChain(
-              devices.noiseSuppression,
-              transmitStream
-            );
-            nsAudioContextsRef.current = chain.contexts;
-            transmitTrack = chain.outputTrack;
-            transmitStream = new MediaStream([chain.outputTrack]);
-            voiceLogger.info('mic: noise suppression ready');
-          } catch (nsError) {
-            voiceLogger.warn('mic: noise suppression setup failed', {
-              error: nsError
-            });
+          if (!producerTransport.current) {
+            throw new Error('Producer transport is not available');
           }
-        }
 
-        transmitMicrophoneTrackRef.current = transmitTrack;
-        setLocalAudioStream(transmitStream);
-        syncTransmitMicrophoneTrackState();
-
-        voiceLogger.info('mic: audio track obtained', {
-          trackId: rawAudioTrack.id,
-          readyState: rawAudioTrack.readyState,
-          settings: rawAudioTrack.getSettings()
-        });
-
-        if (!producerTransport.current) {
-          throw new Error('Producer transport is not available');
-        }
-
-        localAudioProducer.current = await producerTransport.current.produce({
-          track: transmitTrack,
-          codecOptions: {
-            opusStereo: false,
-            opusFec: true,
-            opusDtx: false,
-            opusMaxPlaybackRate: 48000,
-            opusMaxAverageBitrate: 128000
-          },
-          appData: { kind: StreamKind.AUDIO }
-        });
-
-        voiceLogger.info('mic: producer created', {
-          producerId: localAudioProducer.current.id
-        });
-
-        localAudioProducer.current?.observer.on('close', async () => {
-          voiceLogger.info('mic: producer closed');
-
-          const trpc = getTRPCClient();
-
-          try {
-            await trpc.voice.closeProducer.mutate({
-              kind: StreamKind.AUDIO
-            });
-          } catch (error) {
-            voiceLogger.error(
-              'mic: closing producer on the server failed',
-              error
-            );
-          }
-        });
-
-        rawAudioTrack.onended = () => {
-          voiceLogger.warn('mic: track ended, cleaning up');
-
-          transmitStream.getAudioTracks().forEach((track) => {
-            track.stop();
+          const audioProducer = await sending!.produce({
+            track: transmitTrack,
+            codecOptions: {
+              opusStereo: false,
+              opusFec: true,
+              opusDtx: false,
+              opusMaxPlaybackRate: 48000,
+              opusMaxAverageBitrate: 128000
+            },
+            appData: { kind: StreamKind.AUDIO }
           });
-          cleanupMicProcessingResources();
-          localAudioProducer.current?.close();
+          if (signal?.aborted || sending !== producerTransport.current) {
+            audioProducer.close();
+            assertCurrent();
+          }
+          localAudioProducer.current = audioProducer;
 
-          setLocalAudioStream(undefined);
-        };
-      } else {
-        rawStream.getTracks().forEach((track) => track.stop());
-        throw new Error('Failed to obtain audio track from microphone');
+          voiceLogger.info('mic: producer created', {
+            producerId: localAudioProducer.current.id
+          });
+
+          audioProducer.observer.on('close', async () => {
+            voiceLogger.info('mic: producer closed');
+
+            const trpc = getTRPCClient();
+
+            try {
+              await trpc.voice.closeProducer.mutate({
+                kind: StreamKind.AUDIO,
+                producerId: audioProducer.id
+              });
+            } catch (error) {
+              voiceLogger.error(
+                'mic: closing producer on the server failed',
+                error
+              );
+            }
+          });
+
+          rawAudioTrack.onended = () => {
+            voiceLogger.warn('mic: track ended, cleaning up');
+
+            transmitStream.getAudioTracks().forEach((track) => {
+              track.stop();
+            });
+            cleanupMicProcessingResources();
+            localAudioProducer.current?.close();
+
+            setLocalAudioStream(undefined);
+          };
+        } else {
+          rawStream.getTracks().forEach((track) => track.stop());
+          throw new Error('Failed to obtain audio track from microphone');
+        }
+      } catch (error) {
+        acquired?.getTracks().forEach((track) => track.stop());
+        if (sending !== producerTransport.current) throw error;
+        cleanupMicProcessingResources();
+        setLocalAudioStream(undefined);
+        voiceLogger.error('mic: start failed', error);
+        throw error;
       }
-    } catch (error) {
-      cleanupMicProcessingResources();
-      setLocalAudioStream(undefined);
-      voiceLogger.error('mic: start failed', error);
-    }
-  }, [
-    cleanupMicProcessingResources,
-    producerTransport,
-    setLocalAudioStream,
-    localAudioProducer,
-    syncTransmitMicrophoneTrackState,
-    devices.microphoneId,
-    devices.autoGainControl,
-    devices.echoCancellation,
-    devices.noiseSuppression,
-    devices.noiseGateEnabled,
-    devices.noiseGateThresholdDb
-  ]);
+    },
+    [
+      cleanupMicProcessingResources,
+      producerTransport,
+      setLocalAudioStream,
+      localAudioProducer,
+      syncTransmitMicrophoneTrackState,
+      devices.microphoneId,
+      devices.autoGainControl,
+      devices.echoCancellation,
+      devices.noiseSuppression,
+      devices.noiseGateEnabled,
+      devices.noiseGateThresholdDb
+    ]
+  );
 
   const startWebcamStream = useCallback(async () => {
     try {
@@ -786,14 +831,15 @@ const VoiceProvider = memo(({ children }: TVoiceProviderProps) => {
           producerId: localVideoProducer.current?.id
         });
 
-        localVideoProducer.current?.observer.on('close', async () => {
+        const videoProducer = localVideoProducer.current;
+        videoProducer?.observer.on('close', async () => {
           voiceLogger.info('webcam: producer closed');
 
-          const trpc = getTRPCClient();
-
           try {
+            const trpc = getTRPCClient();
             await trpc.voice.closeProducer.mutate({
-              kind: StreamKind.VIDEO
+              kind: StreamKind.VIDEO,
+              producerId: videoProducer.id
             });
           } catch (error) {
             voiceLogger.error(
@@ -1027,14 +1073,15 @@ const VoiceProvider = memo(({ children }: TVoiceProviderProps) => {
 
         setScreenShareProducer(localScreenShareProducer.current);
 
-        localScreenShareProducer.current?.observer.on('close', async () => {
+        const screenProducer = localScreenShareProducer.current;
+        screenProducer?.observer.on('close', async () => {
           voiceLogger.info('screen: producer closed');
 
-          const trpc = getTRPCClient();
-
           try {
+            const trpc = getTRPCClient();
             await trpc.voice.closeProducer.mutate({
-              kind: StreamKind.SCREEN
+              kind: StreamKind.SCREEN,
+              producerId: screenProducer.id
             });
           } catch (error) {
             voiceLogger.error(
@@ -1085,25 +1132,24 @@ const VoiceProvider = memo(({ children }: TVoiceProviderProps) => {
 
           setLocalScreenShareAudio(new MediaStream([audioTrack]));
 
-          localScreenShareAudioProducer.current?.observer.on(
-            'close',
-            async () => {
-              voiceLogger.info('screen audio: producer closed');
+          const screenAudioProducer = localScreenShareAudioProducer.current;
+          screenAudioProducer?.observer.on('close', async () => {
+            voiceLogger.info('screen audio: producer closed');
 
-              const trpc = getTRPCClient();
+            const trpc = getTRPCClient();
 
-              try {
-                await trpc.voice.closeProducer.mutate({
-                  kind: StreamKind.SCREEN_AUDIO
-                });
-              } catch (error) {
-                voiceLogger.error(
-                  'screen audio: closing producer on the server failed',
-                  error
-                );
-              }
+            try {
+              await trpc.voice.closeProducer.mutate({
+                kind: StreamKind.SCREEN_AUDIO,
+                producerId: screenAudioProducer.id
+              });
+            } catch (error) {
+              voiceLogger.error(
+                'screen audio: closing producer on the server failed',
+                error
+              );
             }
-          );
+          });
 
           audioTrack.onended = () => {
             localScreenShareAudioProducer.current?.close();
@@ -1145,6 +1191,7 @@ const VoiceProvider = memo(({ children }: TVoiceProviderProps) => {
   ]);
 
   const cleanup = useCallback(() => {
+    initializationGeneration.current += 1;
     voiceLogger.info('session: cleanup');
 
     stopMonitoring();
@@ -1157,6 +1204,7 @@ const VoiceProvider = memo(({ children }: TVoiceProviderProps) => {
     deviceRtpCapabilities.current = null;
 
     setConnectionStatus(ConnectionStatus.DISCONNECTED);
+    setLoading(false);
   }, [
     stopMonitoring,
     resetStats,
@@ -1170,7 +1218,8 @@ const VoiceProvider = memo(({ children }: TVoiceProviderProps) => {
   const init = useCallback(
     async (
       incomingRouterRtpCapabilities: RtpCapabilities,
-      channelId: number
+      channelId: number,
+      signal?: AbortSignal
     ) => {
       voiceLogger.info('session: initializing', {
         channelId,
@@ -1178,6 +1227,16 @@ const VoiceProvider = memo(({ children }: TVoiceProviderProps) => {
       });
 
       cleanup();
+      const generation = initializationGeneration.current;
+      const sessionId = voiceSessionIdSelector(store.getState());
+      const assertCurrent = () => {
+        signal?.throwIfAborted();
+        if (
+          generation !== initializationGeneration.current ||
+          voiceSessionIdSelector(store.getState()) !== sessionId
+        )
+          throw new DOMException('Voice session changed', 'AbortError');
+      };
 
       try {
         setLoading(true);
@@ -1190,6 +1249,7 @@ const VoiceProvider = memo(({ children }: TVoiceProviderProps) => {
         await device.load({
           routerRtpCapabilities: incomingRouterRtpCapabilities
         });
+        assertCurrent();
 
         const loadedDevice = device as Device & {
           rtpCapabilities?: RtpCapabilities;
@@ -1206,9 +1266,20 @@ const VoiceProvider = memo(({ children }: TVoiceProviderProps) => {
         deviceRtpCapabilities.current = recvRtpCapabilities;
 
         await createProducerTransport(device);
+        assertCurrent();
         await createConsumerTransport(device);
+        assertCurrent();
+        setMediaRevision((revision) => revision + 1);
         await consumeExistingProducers(recvRtpCapabilities);
-        await startMicStream();
+        assertCurrent();
+        await startMicStream(signal);
+        assertCurrent();
+        await withTimeout(
+          waitForConnection,
+          10000,
+          signal ?? new AbortController().signal
+        );
+        assertCurrent();
 
         startMonitoring(producerTransport.current, consumerTransport.current);
         setConnectionStatus(ConnectionStatus.CONNECTED);
@@ -1216,6 +1287,11 @@ const VoiceProvider = memo(({ children }: TVoiceProviderProps) => {
         playSound(SoundType.OWN_USER_JOINED_VOICE_CHANNEL);
       } catch (error) {
         voiceLogger.error('session: init failed', error, { channelId });
+        if (
+          generation !== initializationGeneration.current ||
+          voiceSessionIdSelector(store.getState()) !== sessionId
+        )
+          throw error;
         cleanup();
 
         setConnectionStatus(ConnectionStatus.FAILED);
@@ -1231,10 +1307,29 @@ const VoiceProvider = memo(({ children }: TVoiceProviderProps) => {
       consumeExistingProducers,
       startMicStream,
       startMonitoring,
+      waitForConnection,
       producerTransport,
       consumerTransport
     ]
   );
+
+  const onRecovering = useCallback(() => {
+    setLoading(true);
+    setConnectionStatus(ConnectionStatus.CONNECTING);
+  }, []);
+  const onRecovered = useCallback(() => {
+    setLoading(false);
+    setConnectionStatus(ConnectionStatus.CONNECTED);
+  }, []);
+  const requestRecovery = useVoiceRecovery({
+    init,
+    cleanup,
+    restartIce,
+    waitForConnection,
+    onRecovering,
+    onRecovered
+  });
+  recoveryCallback.current = requestRecovery;
 
   const { toggleMic, toggleSound, toggleWebcam, toggleScreenShare } =
     useVoiceControls({
@@ -1276,6 +1371,10 @@ const VoiceProvider = memo(({ children }: TVoiceProviderProps) => {
   }, [setMicMutedForBridge, setSoundMutedForBridge]);
 
   useVoiceEvents({
+    closeConsumer,
+    closeUserConsumers,
+    consumeExistingProducers,
+    mediaRevision,
     consume,
     removeRemoteUserStream,
     removeExternalStreamTrack,

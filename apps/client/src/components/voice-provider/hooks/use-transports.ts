@@ -18,8 +18,10 @@ import {
 } from 'mediasoup-client/types';
 import { useCallback, useRef } from 'react';
 import { getStoredStreamQuality } from '../helpers';
+import { waitForTransportConnected } from '../transport-recovery';
 
 type TUseTransportParams = {
+  onRecoveryNeeded: () => void;
   addRemoteUserStream: (
     userId: number,
     stream: MediaStream,
@@ -52,6 +54,7 @@ type TUseTransportParams = {
 };
 
 const useTransports = ({
+  onRecoveryNeeded,
   addRemoteUserStream,
   removeRemoteUserStream,
   addExternalStreamTrack,
@@ -69,199 +72,213 @@ const useTransports = ({
   }>({});
   const consumerCodecs = useRef<Map<string, string>>(new Map());
   const consumeOperationsInProgress = useRef<Set<string>>(new Set());
-
-  const createProducerTransport = useCallback(async (device: Device) => {
-    voiceLogger.info('producer transport: creating');
-
-    const trpc = getTRPCClient();
-
-    try {
-      const params = await trpc.voice.createProducerTransport.mutate();
-
-      voiceLogger.info('producer transport: created', {
-        transportId: params.id,
-        iceCandidates: params.iceCandidates.length
-      });
-
-      producerTransport.current = device.createSendTransport(params);
-
-      producerTransport.current.on(
-        'connect',
-        async ({ dtlsParameters }, callback, errback) => {
-          voiceLogger.info('producer transport: dtls connect requested', {
-            role: dtlsParameters.role
-          });
-
-          try {
-            await trpc.voice.connectProducerTransport.mutate({
-              dtlsParameters
-            });
-
-            callback();
-          } catch (error) {
-            errback(error as Error);
-            voiceLogger.error('producer transport: dtls connect failed', error);
-          }
-        }
-      );
-
-      producerTransport.current.on('connectionstatechange', (state) => {
-        voiceLogger.info('producer transport: connection state changed', {
+  const transportGeneration = useRef(0);
+  const recoveryTimers = useRef(
+    new Map<Transport, ReturnType<typeof setTimeout>>()
+  );
+  const monitorConnection = useCallback(
+    (transport: Transport, isCurrent: () => boolean) => {
+      transport.on('connectionstatechange', (state) => {
+        const timer = recoveryTimers.current.get(transport);
+        if (timer) clearTimeout(timer);
+        recoveryTimers.current.delete(transport);
+        if (!isCurrent()) return;
+        voiceLogger.info('transport: connection state changed', {
+          transportId: transport.id,
           state
         });
-
-        if (state === 'failed') {
-          voiceLogger.error(
-            'producer transport: ice failed, closing',
-            new Error(`connection state ${state}`)
+        if (state === 'failed' || state === 'closed') onRecoveryNeeded();
+        if (state === 'disconnected') {
+          recoveryTimers.current.set(
+            transport,
+            setTimeout(() => {
+              recoveryTimers.current.delete(transport);
+              if (isCurrent() && transport.connectionState === 'disconnected')
+                onRecoveryNeeded();
+            }, 4000)
           );
-          producerTransport.current?.close();
-        } else if (state === 'closed') {
-          voiceLogger.info('producer transport: closed');
-          producerTransport.current = undefined;
         }
       });
+    },
+    [onRecoveryNeeded]
+  );
 
-      producerTransport.current.on('icecandidateerror', (error) => {
-        voiceLogger.warn('producer transport: ice candidate error', {
-          address: error.address,
-          port: error.port,
-          errorCode: error.errorCode,
-          errorText: error.errorText
+  const createProducerTransport = useCallback(
+    async (device: Device) => {
+      const generation = transportGeneration.current;
+      voiceLogger.info('producer transport: creating');
+
+      const trpc = getTRPCClient();
+
+      try {
+        const params = await trpc.voice.createProducerTransport.mutate();
+        if (generation !== transportGeneration.current)
+          throw new DOMException('Voice session changed', 'AbortError');
+
+        voiceLogger.info('producer transport: created', {
+          transportId: params.id,
+          iceCandidates: params.iceCandidates.length
         });
-      });
 
-      producerTransport.current.on(
-        'produce',
-        async ({ rtpParameters, appData }, callback, errback) => {
-          voiceLogger.info('producer transport: producing track', {
-            kind: (appData as { kind: StreamKind }).kind,
-            codec: rtpParameters.codecs[0]?.mimeType,
-            encodings: rtpParameters.encodings?.length ?? 0
-          });
+        producerTransport.current = device.createSendTransport(params);
+        const sending = producerTransport.current;
+        monitorConnection(sending, () => producerTransport.current === sending);
 
-          const { kind, qualityLayers } = appData as {
-            kind: TProducibleStreamKind;
-            qualityLayers?: TStreamQualityLayer[];
-          };
-
-          if (!producerTransport.current) return;
-
-          try {
-            const producerId = await trpc.voice.produce.mutate({
-              transportId: producerTransport.current.id,
-              kind,
-              rtpParameters,
-              qualityLayers
+        producerTransport.current.on(
+          'connect',
+          async ({ dtlsParameters }, callback, errback) => {
+            voiceLogger.info('producer transport: dtls connect requested', {
+              role: dtlsParameters.role
             });
 
-            voiceLogger.info('producer transport: track produced', {
-              kind,
-              producerId
-            });
+            try {
+              await trpc.voice.connectProducerTransport.mutate({
+                dtlsParameters
+              });
 
-            callback({ id: producerId });
-          } catch (error) {
-            if (error instanceof TRPCClientError) {
-              if (error.data.code === 'FORBIDDEN') {
-                voiceLogger.warn('producer transport: produce denied', {
-                  kind
-                });
-                errback(
-                  new Error(
-                    `You don't have permission to ${kind} in this channel`
-                  )
-                );
-
-                return;
-              }
+              callback();
+            } catch (error) {
+              errback(error as Error);
+              voiceLogger.error(
+                'producer transport: dtls connect failed',
+                error
+              );
             }
-
-            voiceLogger.error('producer transport: produce failed', error, {
-              kind
-            });
-            errback(error as Error);
           }
-        }
-      );
-    } catch (error) {
-      voiceLogger.error('producer transport: create failed', error);
-    }
-  }, []);
+        );
 
-  const createConsumerTransport = useCallback(async (device: Device) => {
-    voiceLogger.info('consumer transport: creating');
-
-    const trpc = getTRPCClient();
-
-    try {
-      const params = await trpc.voice.createConsumerTransport.mutate();
-
-      voiceLogger.info('consumer transport: created', {
-        transportId: params.id,
-        iceCandidates: params.iceCandidates.length
-      });
-
-      consumerTransport.current = device.createRecvTransport(params);
-
-      consumerTransport.current.on(
-        'connect',
-        async ({ dtlsParameters }, callback, errback) => {
-          voiceLogger.info('consumer transport: dtls connect requested', {
-            role: dtlsParameters.role
+        producerTransport.current.on('icecandidateerror', (error) => {
+          voiceLogger.warn('producer transport: ice candidate error', {
+            address: error.address,
+            port: error.port,
+            errorCode: error.errorCode,
+            errorText: error.errorText
           });
-
-          try {
-            await trpc.voice.connectConsumerTransport.mutate({
-              dtlsParameters
-            });
-
-            callback();
-          } catch (error) {
-            errback(error as Error);
-            voiceLogger.error('consumer transport: dtls connect failed', error);
-          }
-        }
-      );
-
-      consumerTransport.current.on('connectionstatechange', (state) => {
-        voiceLogger.info('consumer transport: connection state changed', {
-          state
         });
 
-        if (state === 'failed') {
-          voiceLogger.error(
-            'consumer transport: ice failed, closing',
-            new Error(`connection state ${state}`)
-          );
-
-          Object.values(consumers.current).forEach((userConsumers) => {
-            Object.values(userConsumers).forEach((consumer) => {
-              consumer.close();
+        producerTransport.current.on(
+          'produce',
+          async ({ rtpParameters, appData }, callback, errback) => {
+            voiceLogger.info('producer transport: producing track', {
+              kind: (appData as { kind: StreamKind }).kind,
+              codec: rtpParameters.codecs[0]?.mimeType,
+              encodings: rtpParameters.encodings?.length ?? 0
             });
-          });
-          consumers.current = {};
 
-          consumerTransport.current?.close();
-          consumerTransport.current = undefined;
-        } else if (state === 'closed') {
-          voiceLogger.info('consumer transport: closed');
-          consumerTransport.current = undefined;
-        }
-      });
+            const { kind, qualityLayers } = appData as {
+              kind: TProducibleStreamKind;
+              qualityLayers?: TStreamQualityLayer[];
+            };
 
-      consumerTransport.current.on('icecandidateerror', (error) => {
-        voiceLogger.warn('consumer transport: ice candidate error', {
-          address: error.address,
-          port: error.port,
-          errorCode: error.errorCode,
-          errorText: error.errorText
+            if (!producerTransport.current) return;
+
+            try {
+              const producerId = await trpc.voice.produce.mutate({
+                transportId: producerTransport.current.id,
+                kind,
+                rtpParameters,
+                qualityLayers
+              });
+
+              voiceLogger.info('producer transport: track produced', {
+                kind,
+                producerId
+              });
+
+              callback({ id: producerId });
+            } catch (error) {
+              if (error instanceof TRPCClientError) {
+                if (error.data.code === 'FORBIDDEN') {
+                  voiceLogger.warn('producer transport: produce denied', {
+                    kind
+                  });
+                  errback(
+                    new Error(
+                      `You don't have permission to ${kind} in this channel`
+                    )
+                  );
+
+                  return;
+                }
+              }
+
+              voiceLogger.error('producer transport: produce failed', error, {
+                kind
+              });
+              errback(error as Error);
+            }
+          }
+        );
+      } catch (error) {
+        voiceLogger.error('producer transport: create failed', error);
+        throw error;
+      }
+    },
+    [monitorConnection]
+  );
+
+  const createConsumerTransport = useCallback(
+    async (device: Device) => {
+      const generation = transportGeneration.current;
+      voiceLogger.info('consumer transport: creating');
+
+      const trpc = getTRPCClient();
+
+      try {
+        const params = await trpc.voice.createConsumerTransport.mutate();
+        if (generation !== transportGeneration.current)
+          throw new DOMException('Voice session changed', 'AbortError');
+
+        voiceLogger.info('consumer transport: created', {
+          transportId: params.id,
+          iceCandidates: params.iceCandidates.length
         });
-      });
-    } catch (error) {
-      voiceLogger.error('consumer transport: create failed', error);
-    }
-  }, []);
+
+        consumerTransport.current = device.createRecvTransport(params);
+        const receiving = consumerTransport.current;
+        monitorConnection(
+          receiving,
+          () => consumerTransport.current === receiving
+        );
+
+        consumerTransport.current.on(
+          'connect',
+          async ({ dtlsParameters }, callback, errback) => {
+            voiceLogger.info('consumer transport: dtls connect requested', {
+              role: dtlsParameters.role
+            });
+
+            try {
+              await trpc.voice.connectConsumerTransport.mutate({
+                dtlsParameters
+              });
+
+              callback();
+            } catch (error) {
+              errback(error as Error);
+              voiceLogger.error(
+                'consumer transport: dtls connect failed',
+                error
+              );
+            }
+          }
+        );
+
+        consumerTransport.current.on('icecandidateerror', (error) => {
+          voiceLogger.warn('consumer transport: ice candidate error', {
+            address: error.address,
+            port: error.port,
+            errorCode: error.errorCode,
+            errorText: error.errorText
+          });
+        });
+      } catch (error) {
+        voiceLogger.error('consumer transport: create failed', error);
+        throw error;
+      }
+    },
+    [monitorConnection]
+  );
 
   const consume = useCallback(
     async (
@@ -288,6 +305,8 @@ const useTransports = ({
       }
 
       consumeOperationsInProgress.current.add(operationKey);
+      const receiving = consumerTransport.current;
+      const generation = transportGeneration.current;
 
       try {
         voiceLogger.info('consumer: consuming', { remoteId, kind });
@@ -306,6 +325,7 @@ const useTransports = ({
           remoteId,
           rtpCapabilities
         });
+        if (receiving !== consumerTransport.current || receiving.closed) return;
 
         voiceLogger.info('consumer: parameters received', {
           remoteId,
@@ -332,12 +352,16 @@ const useTransports = ({
           delete consumers.current[remoteId][consumerKind];
         }
 
-        const newConsumer = await consumerTransport.current.consume({
+        const newConsumer = await receiving.consume({
           id: consumerId,
           producerId: producerId,
           kind: getMediasoupKind(consumerKind),
           rtpParameters: consumerRtpParameters
         });
+        if (receiving !== consumerTransport.current || receiving.closed) {
+          newConsumer.close();
+          return;
+        }
 
         voiceLogger.info('consumer: created', {
           remoteId,
@@ -356,6 +380,8 @@ const useTransports = ({
         cleanupEvents.forEach((event) => {
           // @ts-expect-error - YOLO
           newConsumer?.on(event, () => {
+            if (consumers.current[remoteId]?.[consumerKind] !== newConsumer)
+              return;
             voiceLogger.info('consumer: cleanup event', {
               event,
               remoteId,
@@ -431,7 +457,8 @@ const useTransports = ({
           kind
         });
       } finally {
-        consumeOperationsInProgress.current.delete(operationKey);
+        if (generation === transportGeneration.current)
+          consumeOperationsInProgress.current.delete(operationKey);
       }
     },
     [
@@ -472,37 +499,42 @@ const useTransports = ({
           remoteExternalStreamIds
         });
 
-        remoteAudioIds.forEach((remoteId) => {
-          consume(remoteId, StreamKind.AUDIO, rtpCapabilities);
-        });
-
-        remoteVideoIds.forEach((remoteId) => {
-          consume(remoteId, StreamKind.VIDEO, rtpCapabilities);
-        });
-
-        remoteScreenIds.forEach((remoteId) => {
-          consume(remoteId, StreamKind.SCREEN, rtpCapabilities);
-        });
-
-        remoteScreenAudioIds.forEach((remoteId) => {
-          consume(remoteId, StreamKind.SCREEN_AUDIO, rtpCapabilities);
-        });
+        const pending = [
+          ...remoteAudioIds.map((id) =>
+            consume(id, StreamKind.AUDIO, rtpCapabilities)
+          ),
+          ...remoteVideoIds.map((id) =>
+            consume(id, StreamKind.VIDEO, rtpCapabilities)
+          ),
+          ...remoteScreenIds.map((id) =>
+            consume(id, StreamKind.SCREEN, rtpCapabilities)
+          ),
+          ...remoteScreenAudioIds.map((id) =>
+            consume(id, StreamKind.SCREEN_AUDIO, rtpCapabilities)
+          )
+        ];
 
         remoteExternalStreamIds.forEach((streamId: number) => {
           const tracks = externalStreamTracks?.[streamId];
 
           if (tracks?.audio !== false) {
-            consume(streamId, StreamKind.EXTERNAL_AUDIO, rtpCapabilities);
+            pending.push(
+              consume(streamId, StreamKind.EXTERNAL_AUDIO, rtpCapabilities)
+            );
           }
           if (tracks?.video !== false) {
-            consume(streamId, StreamKind.EXTERNAL_VIDEO, rtpCapabilities);
+            pending.push(
+              consume(streamId, StreamKind.EXTERNAL_VIDEO, rtpCapabilities)
+            );
           }
         });
+        await Promise.all(pending);
       } catch (error) {
         voiceLogger.error(
           'session: consuming existing producers failed',
           error
         );
+        throw error;
       }
     },
     [consume]
@@ -516,6 +548,9 @@ const useTransports = ({
   );
 
   const cleanupTransports = useCallback(() => {
+    transportGeneration.current += 1;
+    for (const timer of recoveryTimers.current.values()) clearTimeout(timer);
+    recoveryTimers.current.clear();
     voiceLogger.info('session: cleaning up transports');
 
     Object.values(consumers.current).forEach((userConsumers) => {
@@ -533,20 +568,79 @@ const useTransports = ({
 
     consumeOperationsInProgress.current.clear();
 
-    if (producerTransport.current && !producerTransport.current.closed) {
-      producerTransport.current.close();
-    }
-
+    const sending = producerTransport.current;
+    const receiving = consumerTransport.current;
     producerTransport.current = undefined;
-
-    if (consumerTransport.current && !consumerTransport.current.closed) {
-      consumerTransport.current.close();
-    }
-
     consumerTransport.current = undefined;
+    sending?.close();
+    receiving?.close();
 
     voiceLogger.info('session: transports cleanup complete');
   }, [clearRemoteConsumerMetadata]);
+
+  const closeConsumer = useCallback(
+    (remoteId: number, kind: StreamKind, producerId?: string): boolean => {
+      const consumer = consumers.current[remoteId]?.[kind];
+      if (!consumer || (producerId && consumer.producerId !== producerId))
+        return false;
+      consumer?.close();
+      delete consumers.current[remoteId]?.[kind];
+      consumerCodecs.current.delete(`${remoteId}-${kind}`);
+      if (
+        consumers.current[remoteId] &&
+        Object.keys(consumers.current[remoteId]).length === 0
+      )
+        delete consumers.current[remoteId];
+      return true;
+    },
+    []
+  );
+
+  const closeUserConsumers = useCallback(
+    (remoteId: number) => {
+      const kinds = Object.keys(
+        consumers.current[remoteId] ?? {}
+      ) as StreamKind[];
+      for (const kind of kinds) closeConsumer(remoteId, kind);
+    },
+    [closeConsumer]
+  );
+
+  const waitForConnection = useCallback(async (signal: AbortSignal) => {
+    const sending = producerTransport.current;
+    const receiving = consumerTransport.current;
+    if (!sending || !receiving) throw new Error('Voice transports are missing');
+    const pending = [waitForTransportConnected(sending, signal)];
+    if (
+      receiving.connectionState !== 'new' ||
+      Object.keys(consumers.current).length > 0
+    )
+      pending.push(waitForTransportConnected(receiving, signal));
+    await Promise.all(pending);
+  }, []);
+
+  const restartIce = useCallback(
+    async (signal: AbortSignal) => {
+      const trpc = getTRPCClient();
+      const transports = [producerTransport.current, consumerTransport.current];
+      for (const [index, transport] of transports.entries()) {
+        signal.throwIfAborted();
+        if (!transport || transport.closed)
+          throw new Error('Voice transport is missing');
+        const { iceParameters } = await trpc.voice.restartIce.mutate(
+          {
+            direction: index === 0 ? 'send' : 'recv',
+            transportId: transport.id
+          },
+          { signal }
+        );
+        signal.throwIfAborted();
+        await transport.restartIce({ iceParameters });
+      }
+      await waitForConnection(signal);
+    },
+    [waitForConnection]
+  );
 
   return {
     producerTransport,
@@ -557,7 +651,11 @@ const useTransports = ({
     consume,
     consumeExistingProducers,
     cleanupTransports,
-    getConsumerCodec
+    getConsumerCodec,
+    restartIce,
+    waitForConnection,
+    closeConsumer,
+    closeUserConsumers
   };
 };
 

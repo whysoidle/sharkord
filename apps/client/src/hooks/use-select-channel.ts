@@ -3,6 +3,7 @@ import { useCurrentVoiceChannelId } from '@/features/server/channels/hooks';
 import { channelByIdSelector } from '@/features/server/channels/selectors';
 import { joinVoice, leaveVoice } from '@/features/server/voice/actions';
 import { useVoice } from '@/features/server/voice/hooks';
+import { voiceSessionIdSelector } from '@/features/server/voice/selectors';
 import { store } from '@/features/store';
 import { LocalStorageKey, setLocalStorageItem } from '@/helpers/storage';
 import { ChannelType } from '@sharkord/shared';
@@ -41,10 +42,12 @@ const useSelectChannel = () => {
         const response = await joinVoice(channel.id);
 
         if (!response) return;
+        const sessionId = voiceSessionIdSelector(store.getState());
 
         try {
           await init(response, channel.id);
         } catch {
+          if (voiceSessionIdSelector(store.getState()) !== sessionId) return;
           await leaveVoice({ reason: 'init_failed' });
 
           toast.error(t('common:failedInitVoiceConnection'));

@@ -3,6 +3,7 @@ import { observable } from '@trpc/server/observable';
 import { protectedProcedure } from '../../utils/trpc';
 
 type TVoiceProducerEvent = {
+  producerId?: string;
   channelId: number;
   remoteId: number;
   kind: StreamKind;

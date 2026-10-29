@@ -153,6 +153,57 @@ class VoiceRuntime {
   private consumers: TConsumerMap = {};
   private producerQualityLayers: TProducerQualityLayerMap = {};
   private userSockets = new Map<number, WebSocket>();
+  private userSessionIds = new Map<number, string>();
+  private static recoveryClaims = new Map<
+    number,
+    { id: string; allowed: boolean }
+  >();
+  private static pendingJoins = new Map<number, { sessionId?: string }>();
+
+  public static beginJoin = (userId: number, sessionId?: string) => {
+    const request = { sessionId };
+    VoiceRuntime.pendingJoins.set(userId, request);
+    return request;
+  };
+
+  public static isPendingJoin = (
+    userId: number,
+    request: { sessionId?: string }
+  ) => VoiceRuntime.pendingJoins.get(userId) === request;
+
+  public static finishJoin = (
+    userId: number,
+    request: { sessionId?: string }
+  ) => {
+    if (VoiceRuntime.isPendingJoin(userId, request))
+      VoiceRuntime.pendingJoins.delete(userId);
+  };
+
+  public static cancelSessionRecovery = (userId: number, sessionId: string) => {
+    const pending = VoiceRuntime.pendingJoins.get(userId);
+    if (pending?.sessionId === sessionId)
+      VoiceRuntime.pendingJoins.delete(userId);
+    const claim = VoiceRuntime.recoveryClaims.get(userId);
+    if (!claim || claim.id === sessionId) {
+      VoiceRuntime.recoveryClaims.set(userId, {
+        id: sessionId,
+        allowed: false
+      });
+    }
+  };
+
+  public static canRecoverSession = (
+    userId: number,
+    sessionId: string
+  ): boolean => {
+    const claim = VoiceRuntime.recoveryClaims.get(userId);
+    return !claim || (claim.id === sessionId && claim.allowed);
+  };
+
+  public static clearRecoveryClaimsForTests = () => {
+    VoiceRuntime.recoveryClaims.clear();
+    VoiceRuntime.pendingJoins.clear();
+  };
 
   private static serverMutedUserIds = new Set<number>();
 
@@ -387,6 +438,7 @@ class VoiceRuntime {
 
     this.state.users = [];
     this.userSockets.clear();
+    this.userSessionIds.clear();
 
     remainingUsers.forEach(({ userId }) => {
       pubsub.publish(ServerEvents.USER_LEAVE_VOICE, {
@@ -424,11 +476,19 @@ class VoiceRuntime {
   public addUser = (
     userId: number,
     state: Pick<TVoiceUserState, 'micMuted' | 'soundMuted'>,
-    socket?: WebSocket
+    socket?: WebSocket,
+    sessionId?: string
   ) => {
     if (this.getUser(userId)) return;
 
     if (socket) this.userSockets.set(userId, socket);
+    if (sessionId) {
+      this.userSessionIds.set(userId, sessionId);
+      VoiceRuntime.recoveryClaims.set(userId, { id: sessionId, allowed: true });
+    } else {
+      const claim = VoiceRuntime.recoveryClaims.get(userId);
+      if (claim) claim.allowed = false;
+    }
 
     this.state.users.push({
       userId,
@@ -448,7 +508,10 @@ class VoiceRuntime {
     });
   };
 
-  public removeUser = (userId: number) => {
+  public removeUser = (userId: number, allowRecovery = false) => {
+    const claim = VoiceRuntime.recoveryClaims.get(userId);
+    if (claim && !allowRecovery) claim.allowed = false;
+    this.userSessionIds.delete(userId);
     this.userSockets.delete(userId);
     this.state.users = this.state.users.filter((u) => u.userId !== userId);
 
@@ -462,6 +525,9 @@ class VoiceRuntime {
 
   public getUserSocket = (userId: number): WebSocket | undefined =>
     this.userSockets.get(userId);
+
+  public getUserSessionId = (userId: number): string | undefined =>
+    this.userSessionIds.get(userId);
 
   public ownsUserSession = (userId: number, socket?: WebSocket): boolean => {
     if (!this.getUser(userId)) return false;
@@ -601,7 +667,12 @@ class VoiceRuntime {
   };
 
   public createConsumerTransport = async (userId: number) => {
+    const user = this.getUser(userId);
     const { transport, params } = await this.createTransport();
+    if (user !== this.getUser(userId)) {
+      transport.close();
+      throw new Error('Voice session changed');
+    }
 
     this.consumerTransports[userId]?.close();
     this.consumerTransports[userId] = transport;
@@ -642,7 +713,12 @@ class VoiceRuntime {
   };
 
   public createProducerTransport = async (userId: number) => {
+    const user = this.getUser(userId);
     const { params, transport } = await this.createTransport();
+    if (user !== this.getUser(userId)) {
+      transport.close();
+      throw new Error('Voice session changed');
+    }
 
     this.producerTransports[userId]?.close();
     this.producerTransports[userId] = transport;

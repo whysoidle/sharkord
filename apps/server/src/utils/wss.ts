@@ -221,10 +221,13 @@ const handleSocketClose = async (ws: WebSocket) => {
       voiceRuntime &&
       (owner === ws || (!owner && !userSockets.has(userId)))
     ) {
-      voiceRuntime.removeUser(userId);
+      const sessionId = voiceRuntime.getUserSessionId(userId);
+      voiceRuntime.removeUser(userId, true);
       pubsub.publish(ServerEvents.USER_LEAVE_VOICE, {
         channelId: voiceRuntime.id,
-        userId
+        userId,
+        recovering: true,
+        sessionId
       });
     }
 

@@ -60,6 +60,8 @@ export interface IServerState {
   ownUserPasswordSet: boolean;
   selectedChannelId: number | undefined;
   currentVoiceChannelId: number | undefined;
+  voiceSessionId: string | undefined;
+  connectionEpoch: number;
   // it lives here rather than in the subscription because joining the new room needs the voice provider context
   voiceMoveTargetChannelId: number | undefined;
   messagesMap: TMessagesMap;
@@ -115,6 +117,8 @@ const initialState: IServerState = {
   emojis: [],
   selectedChannelId: undefined,
   currentVoiceChannelId: undefined,
+  voiceSessionId: undefined,
+  connectionEpoch: 0,
   voiceMoveTargetChannelId: undefined,
   messagesMap: {},
   detachedConversations: {},
@@ -219,6 +223,7 @@ export const serverSlice = createSlice({
       }>
     ) => {
       state.connected = true;
+      state.connectionEpoch += 1;
       state.reconnect = null;
       state.categories = action.payload.categories;
       state.channels = action.payload.channels;
@@ -626,6 +631,10 @@ export const serverSlice = createSlice({
       action: PayloadAction<number | undefined>
     ) => {
       state.currentVoiceChannelId = action.payload;
+      if (action.payload === undefined) state.voiceSessionId = undefined;
+    },
+    setVoiceSessionId: (state, action: PayloadAction<string>) => {
+      state.voiceSessionId = action.payload;
     },
     setVoiceMoveTargetChannelId: (
       state,

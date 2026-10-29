@@ -5,6 +5,11 @@ import type { TVoiceReaction } from '../types';
 const DEFAULT_OBJECT = {};
 const DEFAULT_ARRAY: TVoiceReaction[] = [];
 
+export const voiceSessionIdSelector = (state: IRootState) =>
+  state.server.voiceSessionId;
+export const connectionEpochSelector = (state: IRootState) =>
+  state.server.connectionEpoch;
+
 export const ownVoiceStateSelector = (state: IRootState) => {
   return state.server.ownVoiceState;
 };

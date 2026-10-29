@@ -561,6 +561,27 @@ describe('voice router', () => {
       }
     });
 
+    test('should ignore an old producer close after its replacement has started', async () => {
+      const { runtime, caller, state } = await withProducer();
+      const producer = runtime.getProducer(StreamKind.AUDIO, 2)!;
+      Object.defineProperty(producer, 'id', { value: 'replacement-producer' });
+      try {
+        await caller.voice.closeProducer({
+          kind: StreamKind.AUDIO,
+          producerId: 'old-producer'
+        });
+        expect(state.closed).toBe(false);
+        expect(runtime.getProducer(StreamKind.AUDIO, 2)).toBe(producer);
+        await caller.voice.closeProducer({
+          kind: StreamKind.AUDIO,
+          producerId: producer.id
+        });
+        expect(state.closed).toBe(true);
+      } finally {
+        await runtime.destroy();
+      }
+    });
+
     // the client fires this on mute and on leaving, so the two can race. arriving late has to
     // be a no-op rather than an error the user sees
     test('should ignore a close from a user who already left voice', async () => {

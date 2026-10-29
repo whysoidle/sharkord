@@ -98,6 +98,7 @@ beforeEach(async () => {
   clearRateLimitersForTests();
   clearVoiceMoveGrantsForTests();
   VoiceRuntime.clearServerMutesForTests();
+  VoiceRuntime.clearRecoveryClaimsForTests();
   clearUserSocketsForTests();
 
   if (sqlite) {

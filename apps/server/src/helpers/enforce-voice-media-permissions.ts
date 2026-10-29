@@ -20,11 +20,13 @@ const enforceVoiceMediaPermissions = async (userId: number) => {
   let changed = false;
 
   for (const kind of revokedKinds) {
-    if (!runtime.getProducer(kind, userId)) continue;
+    const producer = runtime.getProducer(kind, userId);
+    if (!producer) continue;
     runtime.removeProducer(userId, kind);
     pubsub.publishForChannel(runtime.id, ServerEvents.VOICE_PRODUCER_CLOSED, {
       channelId: runtime.id,
       remoteId: userId,
+      producerId: producer.id,
       kind
     });
     changed = true;

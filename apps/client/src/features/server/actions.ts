@@ -3,8 +3,9 @@ import { logDebug } from '@/helpers/browser-logger';
 import { getHostFromServer } from '@/helpers/get-file-url';
 import { playSound } from '@/helpers/sounds';
 import { pushVoiceDebugEvent } from '@/helpers/voice-debug';
+import { withTimeout } from '@/helpers/with-timeout';
 import { i18n } from '@/i18n';
-import { cleanup, connectToTRPC, getTRPCClient } from '@/lib/trpc';
+import { cleanup, closeClient, connectToTRPC, getTRPCClient } from '@/lib/trpc';
 import type { TMessageJumpToTarget } from '@/types';
 import {
   type TLocale,
@@ -63,7 +64,7 @@ export const setActiveFullscreenPluginId = (pluginId: string | undefined) => {
   store.dispatch(serverSliceActions.setActiveFullscreenPluginId(pluginId));
 };
 
-export const connect = async () => {
+export const connect = async (signal?: AbortSignal) => {
   const state = store.getState();
   const info = infoSelector(state);
 
@@ -76,7 +77,10 @@ export const connect = async () => {
   const host = getHostFromServer();
   const trpc = await connectToTRPC(host);
 
-  const { hasPassword, handshakeHash } = await trpc.others.handshake.query();
+  const { hasPassword, handshakeHash } = await trpc.others.handshake.query(
+    undefined,
+    { signal }
+  );
 
   if (hasPassword) {
     // show password prompt
@@ -84,20 +88,32 @@ export const connect = async () => {
     return;
   }
 
-  const { showWelcomeDialog } = await joinServer(handshakeHash);
+  const { showWelcomeDialog } = await joinServer(
+    handshakeHash,
+    undefined,
+    signal
+  );
 
   if (showWelcomeDialog) {
     openDialog(Dialog.WELCOME_PROFILE_SETUP);
   }
 };
 
-export const joinServer = async (handshakeHash: string, password?: string) => {
+export const joinServer = async (
+  handshakeHash: string,
+  password?: string,
+  signal?: AbortSignal
+) => {
   const trpc = getTRPCClient();
-  const data = await trpc.others.joinServer.query({
-    handshakeHash,
-    password,
-    locale: i18n.resolvedLanguage as TLocale
-  });
+  const data = await trpc.others.joinServer.query(
+    {
+      handshakeHash,
+      password,
+      locale: i18n.resolvedLanguage as TLocale
+    },
+    { signal }
+  );
+  signal?.throwIfAborted();
 
   logDebug('joinServer', data);
 
@@ -137,8 +153,11 @@ const RECONNECT_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 8_000];
 let reconnectAttempt = 0;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let reconnectDisconnectInfo: TDisconnectInfo | undefined;
+let reconnectController: AbortController | null = null;
 
 export const cancelReconnect = () => {
+  reconnectController?.abort();
+  reconnectController = null;
   if (reconnectTimer) {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
@@ -201,6 +220,8 @@ export const reconnectToServer = (info: TDisconnectInfo) => {
 
   reconnectTimer = setTimeout(async () => {
     reconnectTimer = null;
+    const controller = new AbortController();
+    reconnectController = controller;
 
     store.dispatch(
       serverSliceActions.setReconnect({
@@ -213,13 +234,16 @@ export const reconnectToServer = (info: TDisconnectInfo) => {
     try {
       // connect() opens the password dialog instead of joining when the server asks for one,
       // so reconnecting stays true until setInitialData clears it
-      await connect();
+      await withTimeout((signal) => connect(signal), 8000, controller.signal);
+      if (controller.signal.aborted) return;
       cancelReconnect();
 
       pushVoiceDebugEvent('ws', 'reconnected', {
         voiceChannelId: currentVoiceChannelIdSelector(store.getState())
       });
     } catch (error) {
+      if (controller.signal.aborted) return;
+      closeClient();
       logDebug('reconnect attempt failed', error);
 
       pushVoiceDebugEvent('error', 'reconnect attempt failed', {

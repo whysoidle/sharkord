@@ -75,6 +75,8 @@ type Events = {
   [ServerEvents.USER_LEAVE_VOICE]: {
     channelId: number;
     userId: number;
+    recovering?: boolean;
+    sessionId?: string;
   };
   [ServerEvents.USER_VOICE_STATE_UPDATE]: {
     channelId: number;
@@ -110,6 +112,7 @@ type Events = {
     streamId: number;
   };
   [ServerEvents.VOICE_PRODUCER_CLOSED]: {
+    producerId?: string;
     channelId: number;
     remoteId: number;
     kind: StreamKind;
