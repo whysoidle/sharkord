@@ -739,10 +739,33 @@ describe('voice router', () => {
 
         // sound muting is the user's own playback, so it is never gated
         expect(runtime.getUserState(2)).toMatchObject({
-          micMuted: false,
+          micMuted: true,
           webcamEnabled: false,
           sharingScreen: false,
           soundMuted: true
+        });
+      } finally {
+        await runtime.destroy();
+      }
+    });
+
+    test('should allow stopping camera, screen and microphone after channel permissions are revoked', async () => {
+      const runtime = new VoiceRuntime(PRIVATE_VOICE_CHANNEL_ID);
+      runtime.addUser(2, { micMuted: false, soundMuted: false });
+      runtime.updateUserState(2, { webcamEnabled: true, sharingScreen: true });
+      const { caller } = await initTest(2, undefined, {
+        currentVoiceChannelId: PRIVATE_VOICE_CHANNEL_ID
+      });
+      try {
+        await caller.voice.updateState({
+          webcamEnabled: false,
+          sharingScreen: false,
+          micMuted: true
+        });
+        expect(runtime.getUserState(2)).toMatchObject({
+          webcamEnabled: false,
+          sharingScreen: false,
+          micMuted: true
         });
       } finally {
         await runtime.destroy();

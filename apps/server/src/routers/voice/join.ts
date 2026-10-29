@@ -70,14 +70,19 @@ const joinVoiceRoute = rateLimitedProcedure(protectedProcedure, {
       message: 'Cannot join a direct message channel as a voice channel'
     });
 
-    const userAlreadyInVoiceChannel = VoiceRuntime.findRuntimeByUserId(
-      ctx.user.id
-    );
+    const previousRuntime = VoiceRuntime.findRuntimeByUserId(ctx.user.id);
+    const socket = ctx.getOwnWs();
 
-    invariant(!userAlreadyInVoiceChannel, {
-      code: 'BAD_REQUEST',
-      message: 'User already in a voice channel'
-    });
+    invariant(
+      !previousRuntime ||
+        (socket &&
+          previousRuntime.getUserSocket(ctx.user.id) &&
+          !previousRuntime.ownsUserSession(ctx.user.id, socket)),
+      {
+        code: 'BAD_REQUEST',
+        message: 'User already in a voice channel'
+      }
+    );
 
     await runHook<TBeforeVoiceJoinPayload, never>({
       entries: pluginManager.getHooks('beforeVoiceJoin'),
@@ -95,7 +100,36 @@ const joinVoiceRoute = rateLimitedProcedure(protectedProcedure, {
       message: 'Voice runtime not found for this channel'
     });
 
-    runtime.addUser(ctx.user.id, input.state);
+    const router = runtime.getRouter();
+
+    // a connection may have closed while a plugin hook was running.
+    invariant(!socket || socket.userId === ctx.user.id, {
+      code: 'UNAUTHORIZED',
+      message: 'User not authenticated'
+    });
+
+    // hooks can yield. recheck immediately before replacing the old session, then do the
+    // replacement without an await so a concurrent join cannot interleave with cleanup.
+    const existingRuntime = VoiceRuntime.findRuntimeByUserId(ctx.user.id);
+    invariant(
+      !existingRuntime ||
+        (socket &&
+          existingRuntime.getUserSocket(ctx.user.id) &&
+          !existingRuntime.ownsUserSession(ctx.user.id, socket)),
+      {
+        code: 'BAD_REQUEST',
+        message: 'User already in a voice channel'
+      }
+    );
+    if (existingRuntime) {
+      existingRuntime.removeUser(ctx.user.id);
+      ctx.pubsub.publish(ServerEvents.USER_LEAVE_VOICE, {
+        channelId: existingRuntime.id,
+        userId: ctx.user.id
+      });
+    }
+
+    runtime.addUser(ctx.user.id, input.state, socket);
 
     if (movedByModerator) consumeVoiceMoveGrant(ctx.user.id);
 
@@ -109,8 +143,6 @@ const joinVoiceRoute = rateLimitedProcedure(protectedProcedure, {
     });
 
     logger.info('%s joined voice channel %s', ctx.user.name, channel.name);
-
-    const router = runtime.getRouter();
 
     return {
       routerRtpCapabilities: router.rtpCapabilities

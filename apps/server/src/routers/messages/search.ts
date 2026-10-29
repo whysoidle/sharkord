@@ -6,7 +6,7 @@ import { db } from '../../db';
 import { getChannelsForUser } from '../../db/queries/channels';
 import { getSettings } from '../../db/queries/server';
 import { channels, files, messageFiles, messages } from '../../db/schema';
-import { attachFileToken } from '../../helpers/files-crypto';
+import { signAttachment } from '../../helpers/files-crypto';
 import { invariant } from '../../utils/invariant';
 import { protectedProcedure, rateLimitedProcedure } from '../../utils/trpc';
 
@@ -176,7 +176,7 @@ const searchMessagesRoute = rateLimitedProcedure(protectedProcedure, {
       const attachedFiles = filesByMessageId.get(row.message.id) ?? [];
 
       const preparedFiles = attachedFiles.map((file) =>
-        attachFileToken(
+        signAttachment(
           file,
           settings.storageSignedUrlsEnabled,
           settings.storageSignedUrlsTtlSeconds
@@ -194,7 +194,7 @@ const searchMessagesRoute = rateLimitedProcedure(protectedProcedure, {
     });
 
     const matchedFiles = fileRows.map((row) => {
-      const file = attachFileToken(
+      const file = signAttachment(
         row.file,
         settings.storageSignedUrlsEnabled,
         settings.storageSignedUrlsTtlSeconds

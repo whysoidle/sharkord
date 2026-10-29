@@ -19,6 +19,7 @@ import type {
   RouterOptions,
   WebRtcTransport
 } from 'mediasoup/types';
+import type WebSocket from 'ws';
 import { config } from '../config';
 import { logger } from '../logger';
 import { eventBus } from '../plugins/event-bus';
@@ -151,6 +152,7 @@ class VoiceRuntime {
   private screenAudioProducers: TProducerMap = {};
   private consumers: TConsumerMap = {};
   private producerQualityLayers: TProducerQualityLayerMap = {};
+  private userSockets = new Map<number, WebSocket>();
 
   private static serverMutedUserIds = new Set<number>();
 
@@ -384,6 +386,7 @@ class VoiceRuntime {
     const remainingUsers = this.state.users;
 
     this.state.users = [];
+    this.userSockets.clear();
 
     remainingUsers.forEach(({ userId }) => {
       pubsub.publish(ServerEvents.USER_LEAVE_VOICE, {
@@ -420,9 +423,12 @@ class VoiceRuntime {
 
   public addUser = (
     userId: number,
-    state: Pick<TVoiceUserState, 'micMuted' | 'soundMuted'>
+    state: Pick<TVoiceUserState, 'micMuted' | 'soundMuted'>,
+    socket?: WebSocket
   ) => {
     if (this.getUser(userId)) return;
+
+    if (socket) this.userSockets.set(userId, socket);
 
     this.state.users.push({
       userId,
@@ -443,6 +449,7 @@ class VoiceRuntime {
   };
 
   public removeUser = (userId: number) => {
+    this.userSockets.delete(userId);
     this.state.users = this.state.users.filter((u) => u.userId !== userId);
 
     this.cleanupUserResources(userId);
@@ -451,6 +458,15 @@ class VoiceRuntime {
       userId: userId,
       channelId: this.id
     });
+  };
+
+  public getUserSocket = (userId: number): WebSocket | undefined =>
+    this.userSockets.get(userId);
+
+  public ownsUserSession = (userId: number, socket?: WebSocket): boolean => {
+    if (!this.getUser(userId)) return false;
+    const owner = this.userSockets.get(userId);
+    return !owner || owner === socket;
   };
 
   private cleanupUserResources = (userId: number) => {

@@ -2,10 +2,13 @@ import { eq } from 'drizzle-orm';
 import http from 'http';
 import path from 'path';
 import { db } from '../db';
-import { isFileOrphaned } from '../db/queries/files';
+import { isFileOrphaned, isPrivateAttachment } from '../db/queries/files';
 import { getSettings } from '../db/queries/server';
 import { files } from '../db/schema';
-import { verifyFileToken } from '../helpers/files-crypto';
+import {
+  verifyAttachmentToken,
+  verifyFileToken
+} from '../helpers/files-crypto';
 import { PUBLIC_PATH } from '../helpers/paths';
 import { logger } from '../logger';
 import { buildCacheControl, sendFile, sendJsonError } from './helpers';
@@ -61,6 +64,8 @@ const publicRouteHandler = async (
 
   const { storageSignedUrlsEnabled, logoId } = await getSettings();
   const isSignedUrlProtected = storageSignedUrlsEnabled && dbFile.id !== logoId;
+  const needsAttachmentKey =
+    !isSignedUrlProtected && (await isPrivateAttachment(dbFile.id));
   let tokenExpiresAt: number | null = null;
 
   // server logo is the only exception to signed URLs
@@ -74,9 +79,9 @@ const publicRouteHandler = async (
       return;
     }
 
-    const expiresAt = parseInt(expiresParam, 10);
+    const expiresAt = Number(expiresParam);
 
-    if (isNaN(expiresAt)) {
+    if (!/^\d+$/.test(expiresParam) || !Number.isSafeInteger(expiresAt)) {
       sendJsonError(res, 403, 'Forbidden');
 
       return;
@@ -93,6 +98,21 @@ const publicRouteHandler = async (
     if (!isValidToken) {
       sendJsonError(res, 403, 'Forbidden');
 
+      return;
+    }
+  }
+
+  if (needsAttachmentKey) {
+    const token = url.searchParams.get('accessToken');
+    const expires = url.searchParams.get('expires');
+    const valid =
+      token &&
+      (expires !== null
+        ? /^\d+$/.test(expires) &&
+          verifyFileToken(dbFile.id, token, Number(expires))
+        : verifyAttachmentToken(dbFile.id, token));
+    if (!valid) {
+      sendJsonError(res, 403, 'Forbidden');
       return;
     }
   }
@@ -115,7 +135,9 @@ const publicRouteHandler = async (
   );
 
   await sendFile(req, res, filePath, {
-    cacheControl: buildCacheControl(isSignedUrlProtected, tokenExpiresAt),
+    cacheControl: needsAttachmentKey
+      ? 'private, no-store'
+      : buildCacheControl(isSignedUrlProtected, tokenExpiresAt),
     md5: dbFile.md5,
     contentType: dbFile.mimeType,
     contentDisposition: `${contentDisposition}; filename="${safeFileName}"; filename*=UTF-8''${encodedFileName}`,

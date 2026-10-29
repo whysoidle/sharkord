@@ -209,7 +209,24 @@ const handleSocketClose = async (ws: WebSocket) => {
       return;
     }
 
+    ws.userId = undefined;
     untrackUserSocket(userId, ws);
+
+    const voiceRuntime = VoiceRuntime.findRuntimeByUserId(userId);
+    const owner = voiceRuntime?.getUserSocket(userId);
+
+    // presence belongs to the user, but voice belongs to one connection. an idle tab
+    // must neither keep a dead call alive nor tear down a replacement call.
+    if (
+      voiceRuntime &&
+      (owner === ws || (!owner && !userSockets.has(userId)))
+    ) {
+      voiceRuntime.removeUser(userId);
+      pubsub.publish(ServerEvents.USER_LEAVE_VOICE, {
+        channelId: voiceRuntime.id,
+        userId
+      });
+    }
 
     // only mark as offline when there are no other active sessions
     if (userSockets.has(userId)) {
@@ -218,18 +235,7 @@ const handleSocketClose = async (ws: WebSocket) => {
 
     const user = await getUserById(userId);
 
-    if (!user) return;
-
-    const voiceRuntime = VoiceRuntime.findRuntimeByUserId(user.id);
-
-    if (voiceRuntime) {
-      voiceRuntime.removeUser(user.id);
-
-      pubsub.publish(ServerEvents.USER_LEAVE_VOICE, {
-        channelId: voiceRuntime.id,
-        userId: user.id
-      });
-    }
+    if (!user || userSockets.has(userId)) return;
 
     usersIpMap.delete(user.id);
     pubsub.publish(ServerEvents.USER_LEAVE, user.id);

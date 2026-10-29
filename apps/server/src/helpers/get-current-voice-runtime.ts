@@ -18,6 +18,11 @@ const getCurrentVoiceRuntime = async (ctx: Context) => {
     message: 'Voice runtime not found for this channel'
   });
 
+  invariant(runtime.ownsUserSession(ctx.user.id, ctx.getOwnWs()), {
+    code: 'BAD_REQUEST',
+    message: 'User is not in a voice channel'
+  });
+
   return { runtime, channelId: ctx.currentVoiceChannelId };
 };
 

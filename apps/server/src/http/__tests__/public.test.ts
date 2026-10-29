@@ -380,7 +380,7 @@ describe('/public', () => {
     expect(await fs.exists(path.join(PUBLIC_PATH, dbFile!.name))).toBe(true);
   });
 
-  test('should allow access to private channel files without token when signed URLs disabled', async () => {
+  test('should reject private channel files without a key when signed URLs disabled', async () => {
     const { caller } = await initTest();
 
     const channelId = await caller.channels.add({
@@ -425,11 +425,8 @@ describe('/public', () => {
       `${testsBaseUrl}/public/${encodeURIComponent(dbFile!.name)}`
     );
 
-    expect(response.status).toBe(200);
-
-    const responseText = await response.text();
-
-    expect(responseText).toBe(fileContent);
+    expect(response.status).toBe(403);
+    expect(response.headers.get('Cache-Control')).toBe('no-store');
   });
 
   test('should allow access to public channel files without token', async () => {

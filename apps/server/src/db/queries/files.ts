@@ -1,8 +1,8 @@
 import type { TFile, TPluginStorageUsage } from '@sharkord/shared';
-import { desc, eq, sql, sum } from 'drizzle-orm';
+import { and, desc, eq, or, sql, sum } from 'drizzle-orm';
 import { db } from '..';
 import { attachFileToken } from '../../helpers/files-crypto';
-import { files, messageFiles } from '../schema';
+import { channels, files, messageFiles, messages } from '../schema';
 import { getSettings } from './server';
 
 const getExceedingOldFiles = async (newFileSize: number) => {
@@ -199,6 +199,23 @@ const isFileOrphaned = async (fileId: number): Promise<boolean> => {
   return isOrphaned;
 };
 
+const isPrivateAttachment = async (fileId: number): Promise<boolean> => {
+  const row = await db
+    .select({ id: messageFiles.fileId })
+    .from(messageFiles)
+    .innerJoin(messages, eq(messages.id, messageFiles.messageId))
+    .innerJoin(channels, eq(channels.id, messages.channelId))
+    .where(
+      and(
+        eq(messageFiles.fileId, fileId),
+        or(eq(channels.private, true), eq(channels.isDm, true))
+      )
+    )
+    .limit(1)
+    .get();
+  return !!row;
+};
+
 export {
   getExceedingOldFiles,
   getFileNameById,
@@ -207,5 +224,6 @@ export {
   getOrphanedFileIds,
   getStorageUsageByPlugin,
   getUsedFileQuota,
-  isFileOrphaned
+  isFileOrphaned,
+  isPrivateAttachment
 };

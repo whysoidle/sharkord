@@ -1,6 +1,12 @@
+import type { TFile } from '@sharkord/shared';
 import { beforeEach, describe, expect, spyOn, test, type Mock } from 'bun:test';
 import * as serverQueries from '../../db/queries/server';
-import { generateFileToken, verifyFileToken } from '../files-crypto';
+import {
+  generateFileToken,
+  signAttachment,
+  verifyAttachmentToken,
+  verifyFileToken
+} from '../files-crypto';
 
 describe('files-crypto', () => {
   const fileId = 123;
@@ -160,5 +166,48 @@ describe('files-crypto', () => {
         false
       );
     });
+  });
+
+  test.each([NaN, Infinity, -1, 1.5])(
+    'should reject invalid expiry %s',
+    (expiry) => {
+      expect(
+        verifyFileToken(fileId, generateFileToken(fileId, expiry), expiry)
+      ).toBe(false);
+    }
+  );
+
+  test('should reject a multibyte token without throwing', () => {
+    expect(verifyFileToken(fileId, 'я'.repeat(64), futureExpiresAt)).toBe(
+      false
+    );
+  });
+
+  test('should issue permanent attachment keys only when expiry is disabled', () => {
+    const file = { id: fileId } as TFile;
+    const permanent = signAttachment(file, false, 60);
+    const expiring = signAttachment(file, true, 60);
+    expect(permanent._accessTokenExpiresAt).toBeUndefined();
+    expect(verifyAttachmentToken(fileId, permanent._accessToken!)).toBe(true);
+    expect(verifyAttachmentToken(fileId + 1, permanent._accessToken!)).toBe(
+      false
+    );
+    expect(verifyAttachmentToken(fileId, expiring._accessToken!)).toBe(false);
+    expect(
+      verifyFileToken(
+        fileId,
+        expiring._accessToken!,
+        expiring._accessTokenExpiresAt!
+      )
+    ).toBe(true);
+    mockGetServerTokenSync.mockReturnValue('rotated-server-secret');
+    expect(verifyAttachmentToken(fileId, permanent._accessToken!)).toBe(false);
+    expect(
+      verifyFileToken(
+        fileId,
+        expiring._accessToken!,
+        expiring._accessTokenExpiresAt!
+      )
+    ).toBe(false);
   });
 });

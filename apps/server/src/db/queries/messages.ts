@@ -20,7 +20,11 @@ import {
   type SQL
 } from 'drizzle-orm';
 import { db } from '..';
-import { attachFileToken, signFile } from '../../helpers/files-crypto';
+import {
+  attachFileToken,
+  signAttachment,
+  signFile
+} from '../../helpers/files-crypto';
 import {
   directMessages,
   files,
@@ -115,7 +119,7 @@ const joinMessagesWithRelations = async (
         acc[row.messageId] = [];
       }
 
-      const rowCopy = attachFileToken(
+      const rowCopy = signAttachment(
         row.file,
         storageSignedUrlsEnabled,
         storageSignedUrlsTtlSeconds

@@ -30,6 +30,9 @@ const closeProducerRoute = protectedProcedure
       message: 'Voice runtime not found for this channel'
     });
 
+    // a late stop from the previous connection must not close its replacement's media.
+    if (!runtime.ownsUserSession(ctx.user.id, ctx.getOwnWs())) return;
+
     const producer = runtime.getProducer(input.kind, ctx.user.id);
 
     if (!producer) {

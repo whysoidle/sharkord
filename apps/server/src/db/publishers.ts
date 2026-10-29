@@ -6,6 +6,7 @@ import {
 } from '@sharkord/shared';
 import { eq } from 'drizzle-orm';
 import { db } from '.';
+import { enforceVoiceMediaPermissions } from '../helpers/enforce-voice-media-permissions';
 import { getCapabilityAccessRules } from '../helpers/plugin-capability-access';
 import { logger } from '../logger';
 import { pubsub } from '../utils/pubsub';
@@ -282,6 +283,8 @@ const publishChannelPermissions = async (affectedUserIds: number[]) => {
   const permissionsMap = new Map<number, TChannelUserPermissionsMap>();
   const promises = affectedUserIds.map(async (userId) => {
     const updatedPermissions = await getAllChannelUserPermissions(userId);
+
+    await enforceVoiceMediaPermissions(userId);
 
     permissionsMap.set(userId, updatedPermissions);
   });

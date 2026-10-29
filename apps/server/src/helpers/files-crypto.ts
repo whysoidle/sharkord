@@ -1,6 +1,7 @@
 import type { TFile } from '@sharkord/shared';
 import crypto from 'crypto';
 import { getServerTokenSync } from '../db/queries/server';
+import { safeCompare } from './safe-compare';
 
 const generateFileToken = (fileId: number, expiresAt: number): string => {
   const hmac = crypto.createHmac('sha256', getServerTokenSync());
@@ -15,21 +16,25 @@ const verifyFileToken = (
   providedToken: string,
   expiresAt: number
 ): boolean => {
-  if (Date.now() > expiresAt) {
+  if (!Number.isSafeInteger(expiresAt) || Date.now() >= expiresAt) {
     return false;
   }
 
   const expectedToken = generateFileToken(fileId, expiresAt);
 
-  if (expectedToken.length !== providedToken.length) {
-    return false;
-  }
-
-  return crypto.timingSafeEqual(
-    Buffer.from(expectedToken),
-    Buffer.from(providedToken)
-  );
+  return safeCompare(expectedToken, providedToken);
 };
+
+// capability links keep private attachments unguessable even when expiry is disabled.
+// use a separate domain so an expiring signature can never become a permanent key.
+const generateAttachmentToken = (fileId: number): string => {
+  const hmac = crypto.createHmac('sha256', getServerTokenSync());
+  hmac.update(`attachment:${fileId}`);
+  return hmac.digest('hex');
+};
+
+const verifyAttachmentToken = (fileId: number, token: string): boolean =>
+  safeCompare(generateAttachmentToken(fileId), token);
 
 const attachFileToken = (
   file: TFile,
@@ -58,4 +63,21 @@ const signFile = (
   return attachFileToken(file, enabled, ttl);
 };
 
-export { attachFileToken, generateFileToken, signFile, verifyFileToken };
+const signAttachment = (file: TFile, enabled: boolean, ttl: number): TFile => {
+  if (enabled) return attachFileToken(file, true, ttl);
+
+  return {
+    ...file,
+    _accessToken: generateAttachmentToken(file.id),
+    _accessTokenExpiresAt: undefined
+  };
+};
+
+export {
+  attachFileToken,
+  generateFileToken,
+  signAttachment,
+  signFile,
+  verifyAttachmentToken,
+  verifyFileToken
+};
