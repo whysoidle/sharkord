@@ -11,3 +11,5 @@ windows/bin/
 windows/obj/
 windows-tests/bin/
 windows-tests/obj/
+windows-runtime-tests/bin/
+windows-runtime-tests/obj/

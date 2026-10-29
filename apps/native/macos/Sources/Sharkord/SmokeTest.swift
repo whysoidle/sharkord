@@ -10,6 +10,7 @@ extension AppDelegate {
         let probe = """
             JSON.stringify({
                 ready: !!document.querySelector('[data-testid="theme-switcher"]'),
+                userAgent: navigator.userAgent,
                 cardVisible: Number(getComputedStyle(document.querySelector('[data-slot="card"]') || document.body).opacity) > 0.99,
                 url: location.href,
                 platform: document.documentElement.dataset.sharkordNative,
@@ -42,6 +43,11 @@ extension AppDelegate {
                 try? await Task.sleep(for: .milliseconds(100))
                 guard model.capturing else { throw UpdateError.installFailed }
                 model.capturing = false
+                if args.contains("--smoke-voice-script") {
+                    await runVoiceSmokeTest(model: model, output: output)
+                    NSApp.terminate(nil)
+                    return
+                }
                 if args.contains("--smoke-layout") {
                     await runLayoutSmokeTest(model: model, output: output)
                     NSApp.terminate(nil)

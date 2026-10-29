@@ -49,6 +49,25 @@ jobs:
       - name: Build universal macOS application
         working-directory: apps/native
         run: bun run build:macos
+      - name: Test audio between native WebKit clients
+        timeout-minutes: 3
+        env:
+          SHARKORD_WEBRTC_ANNOUNCED_ADDRESS: 127.0.0.1
+        run: |
+          # native WebKit needs an interface address for local ICE checks.
+          export SHARKORD_WEBRTC_ANNOUNCED_ADDRESS="$(python3 -c 'import socket; s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM); s.connect(("192.0.2.1",9)); print(s.getsockname()[0]); s.close()')"
+          (cd packages/e2e && bun run seed:e2e)
+          (cd apps/server && SHARKORD_DATA_PATH="$GITHUB_WORKSPACE/packages/e2e/e2e-data" bun dev) > /tmp/sharkord-server.log 2>&1 &
+          server_pid=$!
+          (cd apps/client && bun dev) > /tmp/sharkord-client.log 2>&1 &
+          client_pid=$!
+          trap 'kill "$server_pid" "$client_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..60}; do
+            if curl --fail --silent http://localhost:5173/ > /dev/null && curl --fail --silent http://localhost:4991/healthz > /dev/null; then break; fi
+            sleep 1
+          done
+          apps/native/dist/Sharkord.app/Contents/MacOS/Sharkord --smoke-test /tmp/sharkord-voice.json --smoke-url http://localhost:5173/ --smoke-voice-script "$GITHUB_WORKSPACE/apps/native/tests/voice-smoke.js"
+          python3 -c 'import json; report=json.load(open("/tmp/sharkord-voice.json")); print(json.dumps(report)); assert report["passed"]'
       - uses: actions/upload-artifact@v4
         with:
           name: native-macos
@@ -70,6 +89,22 @@ jobs:
       - name: Test updater file replacement
         shell: pwsh
         run: ./apps/native/windows-tests/UpdaterTransaction.ps1
+      - name: Test mediasoup in the actual WebView2 runtime
+        timeout-minutes: 3
+        shell: pwsh
+        run: |
+          bun run apps/native/scripts/build-voice-probe.ts
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $runtime = Join-Path ${env:ProgramFiles(x86)} 'Microsoft/EdgeWebView/Application'
+          if (-not (Test-Path $runtime)) {
+            $installer = Join-Path $env:RUNNER_TEMP 'WebView2Setup.exe'
+            Invoke-WebRequest 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' -OutFile $installer
+            $signature = Get-AuthenticodeSignature $installer
+            if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'Microsoft Corporation') { throw 'Invalid WebView2 installer signature' }
+            Start-Process $installer -ArgumentList '/silent', '/install' -Wait
+          }
+          dotnet run --project apps/native/windows-runtime-tests -c Release -- apps/native/dist/voice-probe "$env:RUNNER_TEMP/webview2-voice.json"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build Windows application
         shell: pwsh
         run: |

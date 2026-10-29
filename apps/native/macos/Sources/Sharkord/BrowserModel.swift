@@ -57,6 +57,9 @@ final class BrowserModel: NSObject, ObservableObject {
         }
 
         let configuration = WKWebViewConfiguration()
+        // mediasoup recognizes desktop WebKit only when the user agent includes Safari.
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
+        configuration.applicationNameForUserAgent = "Safari/605.1.15 Sharkord/\(version)"
         configuration.websiteDataStore = smokeTesting ? .nonPersistent() : WKWebsiteDataStore(forIdentifier: address.dataStoreID)
         configuration.mediaTypesRequiringUserActionForPlayback = []
         let controller = WKUserContentController()
@@ -215,6 +218,7 @@ extension BrowserModel: WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
     func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin,
                  initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType,
                  decisionHandler: @escaping @MainActor @Sendable (WKPermissionDecision) -> Void) {
+        if smokeTesting { decisionHandler(.deny); return }
         let trusted = server?.trustsOrigin(scheme: origin.protocol, host: origin.host, port: origin.port) == true &&
             server?.trusts(webView.url) == true && frame.isMainFrame
         decisionHandler(trusted ? .prompt : .deny)
