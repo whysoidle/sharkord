@@ -27,3 +27,20 @@ Reject(() => UpdateProtocol.Validate(manifest, "0.2.0", "Other.zip"), "wrong pla
 foreach (var invalid in new[] { asset with { sha256 = "invalid" }, asset with { size = -1 }, asset with { size = 500_000_001 } })
     Reject(() => UpdateProtocol.Validate(new UpdateProtocol.Manifest("0.2.0", [invalid]), "0.2.0", asset.name), "invalid update metadata");
 Console.WriteLine("Passed: URL normalization, origin and path checks, profile isolation, version ordering and update manifest validation.");
+
+var media = new MediaPermissions();
+Check(media.Decision(address, "Microphone") == null, "unknown microphone permission");
+media.Remember(address, "Microphone", true);
+media.Remember(address, "Camera", false);
+var restored = System.Text.Json.JsonSerializer.Deserialize<MediaPermissions>(System.Text.Json.JsonSerializer.Serialize(media))!;
+Check(restored.Decision(address, "Microphone") == true, "persistent microphone grant");
+Check(restored.Decision(address, "Camera") == false, "persistent camera denial");
+foreach (string url in new[] { "https://other.example.com/voice/", "https://example.com/other/", "https://example.com:444/voice/" })
+    Check(restored.Decision(new ServerAddress(url), "Microphone") == null, "permission isolation " + url);
+var other = new ServerAddress("https://example.com/other/");
+restored.Remember(other, "Microphone", false);
+restored.Reset(address);
+Check(restored.Decision(address, "Microphone") == null, "reset microphone permission");
+Check(restored.Decision(address, "Camera") == null, "reset camera permission");
+Check(restored.Decision(other, "Microphone") == false, "reset preserves other server");
+Console.WriteLine("Passed: persistent media permission grants, denials, server isolation and reset.");

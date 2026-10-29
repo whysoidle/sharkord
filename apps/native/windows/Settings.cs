@@ -11,6 +11,7 @@ public sealed class Settings
     public List<string> Servers { get; set; } = [];
     public string? LastServer { get; set; }
     public Dictionary<string, bool> Notifications { get; set; } = [];
+    public MediaPermissions CapturePermissions { get; set; } = new();
     public static Settings Load()
     {
         try { return JsonSerializer.Deserialize<Settings>(File.ReadAllText(Path.Combine(DataPath, "settings.json"))) ?? new(); }

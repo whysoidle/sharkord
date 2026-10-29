@@ -17,6 +17,7 @@ final class BrowserModel: NSObject, ObservableObject {
     private var authenticating = false
     private var relay: ScriptRelay?
     private let defaults = UserDefaults.standard
+    private let mediaPermissions = MediaPermissions()
     let smokeTesting = ProcessInfo.processInfo.arguments.contains("--smoke-test")
 
     override init() {
@@ -101,6 +102,14 @@ final class BrowserModel: NSObject, ObservableObject {
 
     func openInBrowser() {
         if let url = server?.url { NSWorkspace.shared.open(url) }
+    }
+
+    func resetMediaPermissions() {
+        guard let server, confirmInterruption() else { return }
+        mediaPermissions.reset(server: server)
+        // the interruption was confirmed above; a fresh WebView releases cached grants.
+        capturing = false
+        connect(server)
     }
 
     func receive(_ message: WKScriptMessage) {
@@ -219,9 +228,40 @@ extension BrowserModel: WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
                  initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType,
                  decisionHandler: @escaping @MainActor @Sendable (WKPermissionDecision) -> Void) {
         if smokeTesting { decisionHandler(.deny); return }
-        let trusted = server?.trustsOrigin(scheme: origin.protocol, host: origin.host, port: origin.port) == true &&
-            server?.trusts(webView.url) == true && frame.isMainFrame
-        decisionHandler(trusted ? .prompt : .deny)
+        guard webView === self.webView, let server, server.trustsOrigin(scheme: origin.protocol, host: origin.host, port: origin.port),
+              server.trusts(webView.url), server.trusts(frame.request.url), frame.isMainFrame else {
+            decisionHandler(.deny)
+            return
+        }
+        let resources: [MediaResource]
+        switch type {
+        case .microphone: resources = [.microphone]
+        case .camera: resources = [.camera]
+        case .cameraAndMicrophone: resources = [.microphone, .camera]
+        @unknown default: decisionHandler(.deny); return
+        }
+        if resources.contains(where: { mediaPermissions.decision(server: server, resource: $0) == false }) {
+            decisionHandler(.deny)
+            return
+        }
+        let pending = resources.filter { mediaPermissions.decision(server: server, resource: $0) == nil }
+        if !pending.isEmpty {
+            let alert = NSAlert()
+            let names = pending.map { $0 == .microphone ? "микрофону" : "камере" }.joined(separator: " и ")
+            alert.messageText = "Разрешить серверу доступ к \(names)?"
+            alert.informativeText = "\(server.id)\nРешение будет сохранено для этого сервера. Сбросить его можно в меню «Сервер → Сбросить доступ к микрофону и камере»."
+            alert.addButton(withTitle: "Разрешить для этого сервера")
+            alert.addButton(withTitle: "Не разрешать")
+            let allowed = alert.runModal() == .alertFirstButtonReturn
+            guard self.server == server, webView === self.webView, server.trusts(webView.url) else {
+                decisionHandler(.deny)
+                return
+            }
+            mediaPermissions.remember(allowed, server: server, resources: pending)
+            decisionHandler(allowed ? .grant : .deny)
+            return
+        }
+        decisionHandler(.grant)
     }
 
     func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters,

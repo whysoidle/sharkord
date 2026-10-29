@@ -33,7 +33,7 @@ jobs:
           SHARKORD_WEBRTC_ANNOUNCED_ADDRESS: 127.0.0.1
         run: |
           bun run seed:e2e
-          node node_modules/@playwright/test/cli.js test native-shell.pw.ts themes.pw.ts --workers=1 --reporter=line
+          node node_modules/@playwright/test/cli.js test native-shell.pw.ts themes.pw.ts device-preferences.pw.ts --workers=1 --reporter=line
   macos:
     runs-on: macos-latest
     steps:

@@ -36,6 +36,7 @@ public partial class MainWindow : Window
         var menu = new Forms.ContextMenuStrip();
         menu.Items.Add("Открыть Sharkord", null, (_, _) => RestoreWindow());
         menu.Items.Add("Проверить обновления", null, async (_, _) => await CheckUpdates());
+        menu.Items.Add("Сбросить доступ к микрофону и камере", null, async (_, _) => await ResetMediaPermissions());
         menu.Items.Add("Выйти", null, (_, _) => Quit());
         tray.ContextMenuStrip = menu;
         PreviewKeyDown += (_, args) =>
@@ -81,6 +82,13 @@ public partial class MainWindow : Window
             core.Settings.IsGeneralAutofillEnabled = false;
             core.Settings.IsPasswordAutosaveEnabled = false;
             core.PermissionRequested += PermissionRequested;
+            core.FrameCreated += (_, frame) => frame.Frame.PermissionRequested += (_, request) =>
+            {
+                // stored capture permissions apply only to the main document.
+                request.State = CoreWebView2PermissionState.Deny;
+                request.SavesInProfile = false;
+                request.Handled = true;
+            };
             core.WebMessageReceived += MessageReceived;
             core.NavigationStarting += (_, args) =>
             {
@@ -143,12 +151,51 @@ public partial class MainWindow : Window
     private void PermissionRequested(object? sender, CoreWebView2PermissionRequestedEventArgs args)
     {
         args.State = CoreWebView2PermissionState.Deny;
-        if (server == null || !Uri.TryCreate(args.Uri, UriKind.Absolute, out var origin) || !server.TrustsOrigin(origin) ||
+        if (!ReferenceEquals(sender, browser?.CoreWebView2) || server == null || !Uri.TryCreate(args.Uri, UriKind.Absolute, out var origin) || !server.TrustsOrigin(origin) ||
             !Uri.TryCreate(browser?.CoreWebView2.Source, UriKind.Absolute, out var page) || !server.Trusts(page)) return;
         if (args.PermissionKind is not (CoreWebView2PermissionKind.Microphone or CoreWebView2PermissionKind.Camera or CoreWebView2PermissionKind.ClipboardRead)) return;
+        bool capture = args.PermissionKind is CoreWebView2PermissionKind.Microphone or CoreWebView2PermissionKind.Camera;
+        if (capture)
+        {
+            args.SavesInProfile = false;
+            bool? saved = settings.CapturePermissions.Decision(server, args.PermissionKind.ToString());
+            if (saved.HasValue)
+            {
+                args.State = saved.Value ? CoreWebView2PermissionState.Allow : CoreWebView2PermissionState.Deny;
+                return;
+            }
+        }
         string resource = args.PermissionKind switch { CoreWebView2PermissionKind.Microphone => "микрофону", CoreWebView2PermissionKind.Camera => "камере", _ => "буферу обмена" };
-        args.State = MessageBox.Show(this, "Разрешить серверу " + server.Url.Host + " доступ к " + resource + "?", "Sharkord", MessageBoxButton.YesNo) == MessageBoxResult.Yes
-            ? CoreWebView2PermissionState.Allow : CoreWebView2PermissionState.Deny;
+        string description = "Разрешить серверу " + server.Id + " доступ к " + resource + "?";
+        if (capture) description += "\nРешение будет сохранено. Сброс доступен в меню значка Sharkord в трее.";
+        var permissionServer = server;
+        bool allowed = MessageBox.Show(this, description, "Sharkord", MessageBoxButton.YesNo) == MessageBoxResult.Yes;
+        if (server != permissionServer || !ReferenceEquals(sender, browser?.CoreWebView2)) return;
+        args.State = allowed ? CoreWebView2PermissionState.Allow : CoreWebView2PermissionState.Deny;
+        if (capture)
+        {
+            settings.CapturePermissions.Remember(server, args.PermissionKind.ToString(), allowed);
+            try { settings.Save(); }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            { StatusText.Text = "Не удалось сохранить разрешение: " + error.Message; }
+        }
+    }
+
+    private async Task ResetMediaPermissions()
+    {
+        if (server == null || !ConfirmInterruption()) return;
+        var address = server;
+        var core = browser?.CoreWebView2;
+        try
+        {
+            settings.CapturePermissions.Reset(address);
+            settings.Save();
+            if (core == null) return;
+            foreach (var kind in new[] { CoreWebView2PermissionKind.Microphone, CoreWebView2PermissionKind.Camera })
+                await core.Profile.SetPermissionStateAsync(kind, address.Url.GetLeftPart(UriPartial.Authority), CoreWebView2PermissionState.Default);
+            if (server == address && ReferenceEquals(core, browser?.CoreWebView2)) core.Reload();
+        }
+        catch (Exception error) { StatusText.Text = "Не удалось сбросить разрешения: " + error.Message; }
     }
 
     private async void MessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs args)

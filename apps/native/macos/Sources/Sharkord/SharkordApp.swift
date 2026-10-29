@@ -25,6 +25,8 @@ struct SharkordApp: App {
                 Button("Перезагрузить") { browser.reload() }
                     .keyboardShortcut("r", modifiers: [.command])
                 Button("Открыть в браузере") { browser.openInBrowser() }
+                Button("Сбросить доступ к микрофону и камере") { browser.resetMediaPermissions() }
+                    .disabled(browser.server == nil)
             }
             CommandGroup(after: .appInfo) {
                 Button("Проверить обновления…") { Task { await updater.check(browser: browser) } }.disabled(updater.busy)

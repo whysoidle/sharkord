@@ -25,6 +25,7 @@ import {
 } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
+import { resolveDeviceId } from './resolve-device-id';
 
 const getDefaultDeviceSettings = (): TDeviceSettings => ({
   microphoneId: undefined,
@@ -48,21 +49,6 @@ const getDefaultDeviceSettings = (): TDeviceSettings => ({
   screenBitrate: DEFAULT_BITRATE,
   screenCursor: ScreenCursor.ALWAYS
 });
-
-const resolveDeviceId = (
-  savedId: string | undefined,
-  availableDevices: (MediaDeviceInfo | undefined)[]
-): string => {
-  if (savedId && availableDevices.some((d) => d?.deviceId === savedId)) {
-    return savedId;
-  }
-
-  const defaultDevice = availableDevices.find((d) => d?.deviceId === 'default');
-
-  if (defaultDevice) return defaultDevice.deviceId;
-
-  return availableDevices[0]?.deviceId ?? 'default';
-};
 
 const normalizeDevices = (
   devices: MediaDeviceInfo[],
