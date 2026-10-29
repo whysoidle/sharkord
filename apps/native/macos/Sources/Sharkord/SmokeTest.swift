@@ -42,6 +42,11 @@ extension AppDelegate {
                 try? await Task.sleep(for: .milliseconds(100))
                 guard model.capturing else { throw UpdateError.installFailed }
                 model.capturing = false
+                if args.contains("--smoke-layout") {
+                    await runLayoutSmokeTest(model: model, output: output)
+                    NSApp.terminate(nil)
+                    return
+                }
                 try data.write(to: output)
                 await withCheckedContinuation { continuation in
                     model.webView.takeSnapshot(with: nil) { image, _ in
@@ -58,5 +63,75 @@ extension AppDelegate {
         }
         try? Data("{\"ready\":false,\"error\":\"Native WebKit smoke test failed\"}".utf8).write(to: output)
         NSApp.terminate(nil)
+    }
+
+    private func runLayoutSmokeTest(model: BrowserModel, output: URL) async {
+        guard let window = model.webView.window else { return }
+        var cases: [[String: Any]] = []
+        let probe = """
+            JSON.stringify((() => {
+                const card = document.querySelector('[data-slot="card"]');
+                const bounds = card.getBoundingClientRect();
+                return {
+                    innerWidth, innerHeight,
+                    clientWidth: document.documentElement.clientWidth,
+                    scrollWidth: document.documentElement.scrollWidth,
+                    card: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height },
+                    root: { width: document.getElementById('root').getBoundingClientRect().width },
+                    theme: localStorage.getItem('vite-ui-theme'),
+                    dark: document.documentElement.classList.contains('dark')
+                };
+            })())
+            """
+        for theme in ["dark", "light", "system"] {
+            _ = try? await model.webView.evaluateJavaScript("localStorage.setItem('vite-ui-theme', '\(theme)'); location.reload()")
+            for _ in 0..<60 {
+                try? await Task.sleep(for: .milliseconds(100))
+                let ready = try? await model.webView.evaluateJavaScript("!!document.querySelector('[data-testid=\"theme-switcher\"]')") as? Bool
+                if !model.isLoading && ready == true { break }
+            }
+            for size in [NSSize(width: 1180, height: 800), NSSize(width: 1600, height: 1000), .zero, NSSize(width: 780, height: 580)] {
+                if size == .zero {
+                    window.makeKeyAndOrderFront(nil)
+                    NSApp.activate(ignoringOtherApps: true)
+                    window.toggleFullScreen(nil)
+                    try? await Task.sleep(for: .milliseconds(1500))
+                } else {
+                    window.setContentSize(size)
+                }
+                try? await Task.sleep(for: .milliseconds(400))
+                guard let report = try? await model.webView.evaluateJavaScript(probe) as? String,
+                      let data = report.data(using: .utf8),
+                      var values = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
+                let origin = model.webView.convert(.zero, to: window.contentView).x
+                let card = values["card"] as? [String: Double] ?? [:]
+                let center = ((card["x"] ?? -10000) + (card["width"] ?? 0) / 2) * model.webView.pageZoom + origin
+                let viewport = (values["innerWidth"] as? Double ?? 0) * model.webView.pageZoom
+                let centered = abs(center - window.contentLayoutRect.width / 2) < 2
+                let fits = abs(viewport - model.webView.bounds.width) < 2
+                let correctMode = window.styleMask.contains(.fullScreen) == (size == .zero)
+                values["passed"] = centered && fits && correctMode
+                values["requestedTheme"] = theme
+                values["windowWidth"] = window.contentLayoutRect.width
+                values["webViewX"] = model.webView.frame.minX
+                values["webViewWidth"] = model.webView.frame.width
+                values["webViewHeight"] = model.webView.frame.height
+                values["requestedWidth"] = size.width
+                values["fullscreen"] = window.styleMask.contains(.fullScreen)
+                values["viewOriginX"] = model.webView.convert(.zero, to: window.contentView).x
+                cases.append(values)
+                if size == .zero {
+                    window.toggleFullScreen(nil)
+                    try? await Task.sleep(for: .milliseconds(1500))
+                }
+            }
+        }
+        if let data = try? JSONSerialization.data(withJSONObject: [
+            "ready": true,
+            "passed": cases.count == 12 && cases.allSatisfy { $0["passed"] as? Bool == true },
+            "cases": cases
+        ], options: [.prettyPrinted, .sortedKeys]) {
+            try? data.write(to: output)
+        }
     }
 }

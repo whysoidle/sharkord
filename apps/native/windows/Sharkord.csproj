@@ -8,7 +8,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <AssemblyName>Sharkord</AssemblyName>
-    <Version>0.1.0</Version>
+    <Version>0.1.1</Version>
     <WebView2Version>1.0.4314.35</WebView2Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>../../client/public/favicon.ico</ApplicationIcon>

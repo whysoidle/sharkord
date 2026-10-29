@@ -68,7 +68,9 @@ struct ContentView: View {
     var body: some View {
         ZStack {
             if browser.server != nil {
-                BrowserView(browser: browser).id(ObjectIdentifier(browser.webView))
+                BrowserView(browser: browser)
+                    .id(ObjectIdentifier(browser.webView))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 VStack(spacing: 20) {
                     Image(systemName: "bubble.left.and.bubble.right.fill").font(.system(size: 56)).foregroundStyle(.blue.gradient)
@@ -170,13 +172,19 @@ struct ServerPicker: View {
 
 struct BrowserView: NSViewRepresentable {
     let browser: BrowserModel
-    func makeNSView(context: Context) -> WKWebView {
+    func makeNSView(context: Context) -> NSView {
+        // let SwiftUI resize a plain container instead of negotiating WebKit's content size.
+        let container = NSView()
         let view = browser.webView
+        view.frame = container.bounds
+        view.translatesAutoresizingMaskIntoConstraints = true
+        view.autoresizingMask = [.width, .height]
+        container.addSubview(view)
         DispatchQueue.main.async {
             view.window?.delegate = browser
             view.window?.isReleasedWhenClosed = false
         }
-        return view
+        return container
     }
-    func updateNSView(_ nsView: WKWebView, context: Context) {}
+    func updateNSView(_ nsView: NSView, context: Context) {}
 }
