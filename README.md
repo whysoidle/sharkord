@@ -1,107 +1,184 @@
-<div align="center">
-  <h1>Sharkord</h1>
-  <p><strong>A lightweight, self-hosted real-time communication platform</strong></p>
-  
-  [![Version](https://img.shields.io/github/v/release/Sharkord/sharkord)](https://github.com/Sharkord/sharkord/releases)
-  [![License](https://img.shields.io/github/license/Sharkord/sharkord)](LICENSE)
-  [![Downloads](https://img.shields.io/github/downloads/Sharkord/sharkord/total)](https://github.com/Sharkord/sharkord/releases)
-  [![Last Commit](https://img.shields.io/github/last-commit/Sharkord/sharkord)](https://github.com/Sharkord/sharkord/commits)
-  
-  [![Bun](https://img.shields.io/badge/Bun-v1.3.14-green.svg)](https://bun.sh)
-  [![Mediasoup](https://img.shields.io/badge/Mediasoup-v3.19.19-green.svg)](https://mediasoup.org)
-</div>
+# Sharkord · форк whysoidle
 
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/B0B71U3476)
+Голосовые каналы, текстовый чат и картинки на своём сервере. Этот форк
+[Sharkord](https://github.com/Sharkord/sharkord) добавляет доработки для
+небольшого VPS, переключение тем и приложения для Windows и macOS.
 
-## What is Sharkord?
+Основу проекта разработала команда Sharkord. Форк развивается отдельно, с
+сохранением исходной [лицензии MIT](LICENSE) и авторства оригинала.
 
-> [!NOTE]
-> Sharkord is in alpha stage. Bugs, incomplete features and breaking changes are to be expected.
+[![CI](https://github.com/whysoidle/sharkord/actions/workflows/ci.yml/badge.svg)](https://github.com/whysoidle/sharkord/actions/workflows/ci.yml)
+[![Native Clients](https://github.com/whysoidle/sharkord/actions/workflows/native-clients.yml/badge.svg)](https://github.com/whysoidle/sharkord/actions/workflows/native-clients.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Sharkord is a self-hosted communication platform that brings the most important Discord-like features to your own infrastructure. Voice, video, and screen sharing without the bloat or surveillance.
+[Скачать приложения](https://github.com/whysoidle/sharkord/releases) ·
+[Установка на VPS](deploy/vps/README.md) ·
+[Клиенты и их сборка](apps/native/README.md) ·
+[Оригинальный Sharkord](https://github.com/Sharkord/sharkord)
 
-## Screenshots
+## Чем форк отличается от оригинала
 
-![Sharkord Screenshot](https://i.imgur.com/urO9vKC.png)
+Ниже перечислены изменения относительно
+[исходного коммита `d93f48f`](https://github.com/Sharkord/sharkord/tree/d93f48fa785fd585b85595d755fe89159ac5ae03),
+от которого ответвился форк. Upstream может развиваться независимо.
+[Полный список изменений](https://github.com/whysoidle/sharkord/compare/d93f48fa785fd585b85595d755fe89159ac5ae03...development).
 
-## Features
+| Область                  | Что изменено в форке                                                                                                                                                                                            |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Загрузка файлов          | Добавлены ограничение одновременных загрузок, проверка свободного места и резервирование квот с учётом незавершённых загрузок.                                                                                  |
+| Память и временные файлы | Контрольная сумма файла считается потоком, без чтения всего файла в RAM. Исправлены очистка оборванных загрузок, работа временных файлов и их таймеров.                                                         |
+| Превью ссылок            | Ограничены размер ответа, перенаправления, очередь и кэш. Добавлена настройка полного отключения превью.                                                                                                        |
+| Размещение по подпути    | Поддерживается адрес вида `https://example.com/voice/`: пути интерфейса, файлов, WebSocket, манифеста и возврата после OIDC учитывают префикс.                                                                  |
+| Старые процессоры x64    | Добавлена цель сборки `bun-linux-x64-baseline`, используемая для VPS с процессором без AVX2. Можно собирать только выбранную платформу через `--target`.                                                        |
+| Темы                     | Добавлен переключатель «Системная / Тёмная / Светлая» на экране входа и в настройках «Прочее». Выбор сохраняется в браузере, системная тема реагирует на настройки ОС. Тема меняется без перезагрузки страницы. |
+| Приложения               | Добавлены отдельные оболочки для Windows и macOS с системными WebView, выбором сервера, недавними подключениями и отдельным профилем данных для каждого URL.                                                    |
+| Оформление macOS         | В Mac-приложении есть нативная панель Liquid Glass на macOS 26+ и дополнительное стеклянное оформление внутри WebView. Веб-версия сохраняет обычный стиль.                                                      |
+| Обновление клиентов      | Добавлена кнопка обновления из GitHub Releases с проверкой версии, размера и SHA-256 архива. Клиентские выпуски используют теги `client-v*`.                                                                    |
+| Развёртывание            | Добавлены примеры systemd, переменных окружения и Caddy для совместного запуска с Foundry VTT. Ошибка запуска медиапроцесса завершает сервер с кодом ошибки, чтобы systemd мог его перезапустить.               |
 
-- **Voice channels** with video and screen sharing, over a built-in mediasoup SFU
-- **Text channels** grouped into categories, with threads, replies, reactions, pins and search
-- **Direct messages** between members
-- **Roles and permissions**, with per-channel overrides for individual roles and users
-- **Custom emoji**, mentions and channel references
-- **Invites** with usage limits and automatic role assignment
-- **File uploads** with per-user storage quotas and optional signed URLs
-- **Plugins** that extend both server and client, through the [plugin SDK](packages/plugin-sdk)
+Эти изменения ограничивают отдельные источники нагрузки. Сравнительных замеров
+производительности с оригиналом пока нет; число пользователей и запас ресурсов
+зависят от конкретного VPS и сценария общения.
 
-## Docs
+## Что пришло из Sharkord
 
-For detailed documentation, please visit our [Documentation](https://sharkord.com/docs).
+Форк сохраняет основные возможности исходного проекта:
 
-## Wanna Try It Out?
+- Голосовые каналы, видео и демонстрацию экрана через mediasoup SFU.
+- Текстовые каналы и категории, ветки обсуждений, ответы, реакции, закрепления и
+  поиск.
+- Личные сообщения, упоминания и собственные эмодзи.
+- Роли, права доступа и приглашения.
+- Вложения, пользовательские квоты и плагины.
 
-Check out the Live Demo at [demo.sharkord.com](https://demo.sharkord.com).
+Сервер написан на TypeScript и работает в Bun, веб-клиент использует React.
+Нативные приложения используют существующий интерфейс выбранного сервера внутри
+системного WebView.
 
-## Getting Started
+## Приложения для Windows и macOS
 
-Sharkord is distributed as a standalone binary that bundles both server and client components. Get started by downloading the latest release for your platform from the [Releases](https://github.com/Sharkord/sharkord/releases) page. We ship binaries for Windows, macOS, and Linux.
+Сборки доступны в
+[GitHub Releases этого форка](https://github.com/whysoidle/sharkord/releases).
 
-#### Linux x64
+| Платформа                        | Архив                          | Установка                                                                                                                                                               |
+| -------------------------------- | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Windows 10/11 x64                | `Sharkord-windows-x64.zip`     | Распакуйте архив целиком и запустите `Sharkord.exe`. Нужен Microsoft Edge WebView2 Runtime; среда .NET включена в сборку.                                               |
+| macOS 14+, Intel и Apple Silicon | `Sharkord-macos-universal.zip` | Распакуйте архив и перенесите `Sharkord.app` в «Программы». Liquid Glass доступен на macOS 26+, на более ранних поддерживаемых версиях используется системный материал. |
 
-```bash
-curl -L https://github.com/sharkord/sharkord/releases/latest/download/sharkord-linux-x64 -o sharkord
-chmod +x sharkord
-./sharkord
+При подключении укажите адрес своего сервера, например
+`https://chat.example.com/voice/`. Приложения сохраняют десять недавних адресов
+и разделяют профили данных по полному URL, включая подпуть. Они работают с
+совместимыми серверами Sharkord по HTTPS; для локальной разработки допускается
+HTTP на localhost.
+
+В Windows кнопка «Обновления», а на Mac кнопка со стрелкой вниз или меню
+«Sharkord → Проверить обновления…» проверяют клиентские релизы этого
+репозитория. После подтверждения приложение скачивает сборку, проверяет её и
+устанавливает с перезапуском. Настройки серверов и профили хранятся отдельно от
+файлов приложения.
+
+Mac-сборка имеет локальную подпись, без сертификата Developer ID и нотарификации
+Apple. Первый запуск может потребовать разрешения в «Настройки системы →
+Конфиденциальность и безопасность → Всё равно открыть». Подробности установки,
+устройства клиентов и обновлений описаны в
+[README приложений](apps/native/README.md) и
+[инструкции к выпуску](apps/native/RELEASE.md).
+
+## Установка сервера
+
+Клиентские ZIP-архивы содержат приложения для подключения к уже работающему
+серверу. Для серверной части используйте сборку из этого репозитория. CI также
+сохраняет Linux-бинарник как артефакт успешного запуска
+[Build & Test](https://github.com/whysoidle/sharkord/actions/workflows/ci.yml).
+
+Пример сборки и запуска для Linux x64 с Bun 1.3.14:
+
+```sh
+git clone https://github.com/whysoidle/sharkord.git
+cd sharkord
+bun install --frozen-lockfile
+cd apps/server
+bun run build --target bun-linux-x64-baseline
+chmod +x build/out/sharkord-linux-x64-baseline
+./build/out/sharkord-linux-x64-baseline
 ```
 
-#### Docker
+Бинарник содержит сервер, веб-интерфейс и необходимые ресурсы. После запуска
+локальный интерфейс доступен по адресу `http://localhost:4991/`. Для доступа
+извне настройте HTTPS через обратный прокси и откройте настроенный порт WebRTC,
+по умолчанию `40000` по TCP и UDP.
 
-Sharkord can also be run using Docker. Here's how to run it:
+При первом запуске сервер выводит секретный токен владельца. Сохраните его
+отдельно и не публикуйте в логах, скриншотах или issues.
 
-```bash
-docker run \
-  -p 4991:4991/tcp \
-  -p 40000:40000/tcp \
-  -p 40000:40000/udp \
-  -v ./data:/home/bun/.config/sharkord \
-  --name sharkord \
-  sharkord/sharkord:latest
+### VPS и совместный запуск с Foundry VTT
+
+В каталоге [`deploy/vps`](deploy/vps/README.md) есть профиль для небольшого VPS:
+отдельный пользователь и сервис, ограничения ресурсов и маршрутизация через
+Caddy. Пример направляет `/voice/` в Sharkord, остальные пути в Foundry VTT.
+
+Для размещения по подпути соберите интерфейс с этим же префиксом:
+
+```sh
+SHARKORD_BASE_PATH=/voice bun run build --target bun-linux-x64-baseline
 ```
 
-> [!WARNING]
-> Upon first launch, Sharkord creates a secret token and prints it to the console. It is both the credential that grants owner access and the key your server signs every session and file URL with, so anyone who obtains it can take ownership **and** impersonate any account. Keep it out of logs, screenshots and issue reports, store it securely, and do not lose it.
+Команда выполняется из `apps/server`. При запуске задайте тот же
+`SHARKORD_BASE_PATH`; обратный прокси должен удалять префикс перед передачей
+HTTP- и WebSocket-запросов серверу. В примерах замените домен и IP на свои.
 
-Once the server is running, open your web browser and navigate to [http://localhost:4991](http://localhost:4991) to access the Sharkord client interface. If you're running the server on a different machine, replace `localhost` with the server's IP address or domain name.
+Параметры из примера развёртывания:
 
-Check out our [Documentation](https://sharkord.com/docs) for more detailed setup instructions, configuration options, and troubleshooting tips.
+| Параметр                                          | Значение профиля     |
+| ------------------------------------------------- | -------------------- |
+| Порог ограничения памяти systemd                  | `MemoryHigh=512M`    |
+| Максимальная RAM сервиса и его дочерних процессов | `MemoryMax=768M`     |
+| Максимальный swap для сервиса                     | `MemorySwapMax=256M` |
+| Одновременные загрузки                            | 2                    |
+| Резерв свободного места на диске                  | 3 ГиБ                |
+| Превью внешних ссылок                             | Отключены            |
 
-## Contributing
+Это настройки профиля VPS. Применяйте их с учётом соседних сервисов и доступных
+ресурсов. Размер вложений, общие и пользовательские квоты задаются в настройках
+самого Sharkord.
 
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details, and [Development](DEVELOPMENT.md) for running Sharkord locally.
+Сборку лучше выполнять вне рабочего VPS. Профиль systemd предполагает установку
+проверенного бинарника в каталог выпуска и переключение `/opt/sharkord/current`;
+обновление серверной части выполняется администратором с резервной копией
+данных. Кнопка обновления в приложениях обновляет только клиентскую оболочку.
 
-## License
+## Разработка и проверка
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+- [Локальный запуск и работа с сервером](DEVELOPMENT.md).
+- [Сборка Windows- и macOS-приложений](apps/native/README.md).
+- [Профиль VPS, переменные окружения и Caddy](deploy/vps/README.md).
+- [Документация оригинального Sharkord](https://sharkord.com/docs) по
+  возможностям основы; особенности форка описаны в этом репозитории.
 
-## Acknowledgments
+Основные проверки из корня репозитория:
 
-Built with amazing open-source technologies:
+```sh
+bun run magic
+bun run test
+```
 
-- [Bun](https://bun.sh)
-- [tRPC](https://trpc.io)
-- [Mediasoup](https://mediasoup.org)
-- [Drizzle ORM](https://orm.drizzle.team)
-- [React](https://react.dev)
-- [Radix UI](https://www.radix-ui.com)
-- [ShadCN UI](https://ui.shadcn.com/)
-- [Tailwind CSS](https://tailwindcss.com)
+Для клиентов дополнительно проверяются политики URL, профили серверов и
+манифесты обновлений. Браузерные тесты покрывают темы и нативный мост. Проверен
+запуск Mac-сборки с WebKit и доступность Opus/WebRTC; реальный звонок между
+физическими устройствами в новых оболочках пока не проверялся. Видео и
+демонстрация экрана зависят от возможностей системного WebView.
 
-<div align="center">
-  <p>Made with ❤️ by the Sharkord team</p>
-  <p>
-    <a href="https://github.com/Sharkord/sharkord">GitHub</a> •
-    <a href="https://github.com/Sharkord/sharkord/issues">Issues</a> •
-    <a href="https://github.com/Sharkord/sharkord/discussions">Discussions</a>
-  </p>
-</div>
+## Статус, авторство и лицензия
+
+Sharkord находится на стадии alpha; в основе и изменениях форка возможны ошибки
+и несовместимые обновления. Перед обновлением сервера сохраняйте базу данных и
+загруженные файлы.
+
+Исходный проект: [Sharkord/sharkord](https://github.com/Sharkord/sharkord),
+авторы основы: Sharkord Team. Изменения этого форка ведутся в
+[whysoidle/sharkord](https://github.com/whysoidle/sharkord). Вопросы и ошибки,
+связанные с доработками форка, можно оставить в
+[его Issues](https://github.com/whysoidle/sharkord/issues).
+
+Лицензия проекта: [MIT](LICENSE). Исходное уведомление
+`Copyright (c) 2025 Sharkord Team` сохранено в файле лицензии.
