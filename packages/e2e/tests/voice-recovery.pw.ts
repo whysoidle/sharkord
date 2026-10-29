@@ -23,17 +23,29 @@ const prepare = async (page: Page) => {
     window.RTCPeerConnection = class extends NativePeer {
       constructor(...args) { super(...args); window.__testPeers.push(this); }
     };
-    navigator.mediaDevices.getUserMedia = async () => {
-      const context = new AudioContext();
-      const oscillator = context.createOscillator();
-      const destination = context.createMediaStreamDestination();
-      oscillator.frequency.value = 440;
-      oscillator.connect(destination);
-      oscillator.start();
-      await context.resume();
-      destination.stream.getTracks().forEach(track => track.addEventListener('ended', () => { oscillator.stop(); context.close(); }, { once: true }));
-      return destination.stream;
-    };
+    // webkit needs a gesture to unlock synthetic Web Audio. real microphone capture
+    // has its own permission flow, which this fixture deliberately avoids.
+    document.addEventListener('pointerdown', () => {
+      window.__testAudioContext ||= new AudioContext({ sampleRate: 48000 });
+      window.__testAudioContext.resume();
+    }, { capture: true });
+    // patch the prototype because webkit does not retain instance overrides here.
+    Object.defineProperty(Object.getPrototypeOf(navigator.mediaDevices), 'getUserMedia', {
+      configurable: true,
+      value: async () => {
+        const context = window.__testAudioContext || new AudioContext({ sampleRate: 48000 });
+        const oscillator = context.createOscillator();
+        const destination = context.createMediaStreamDestination();
+        oscillator.frequency.value = 440;
+        oscillator.connect(destination);
+        oscillator.start();
+        await context.resume();
+        destination.stream.getTracks().forEach(track => {
+          track.addEventListener('ended', () => oscillator.stop(), { once: true });
+        });
+        return destination.stream;
+      }
+    });
   })()`);
 };
 
@@ -89,6 +101,13 @@ test('voice recovers after ICE failure and websocket loss without duplicate stre
   try {
     await loginAs(first, 'testowner', 'password123');
     await loginAs(second, 'testuser', 'password123');
+    for (const page of [first, second]) {
+      expect(
+        await page.evaluate(
+          "String(navigator.mediaDevices.getUserMedia).includes('oscillator')"
+        )
+      ).toBe(true);
+    }
     const name = `Recovery ${Date.now().toString().slice(-8)}`;
     channelId = await first.evaluate<number>(`(async () => {
       const { getTRPCClient } = await import('/src/lib/trpc.ts');
@@ -109,7 +128,7 @@ test('voice recovers after ICE failure and websocket loss without duplicate stre
       Object.defineProperty(peer, 'connectionState', { configurable: true, value: 'failed' });
       peer.dispatchEvent(new Event('connectionstatechange'));
       delete peer.connectionState;
-      // the synthetic failure did not change Chromium's actual network. deliver its
+      // the synthetic failure did not change the browser's actual network. deliver its
       // current state after the restart begins; the new ICE credentials are real.
       setTimeout(() => peer.dispatchEvent(new Event('connectionstatechange')), 100);
     })()`);
