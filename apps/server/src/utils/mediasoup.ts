@@ -13,6 +13,17 @@ let mediaSoupWorker: mediasoup.types.Worker<mediasoup.types.AppData>;
 let webRtcServer: mediasoup.types.WebRtcServer<mediasoup.types.AppData>;
 let webRtcServerListenInfo: { ip: string; announcedAddress?: string };
 
+const resolveWebRtcListenInfo = (
+  production: boolean,
+  announcedAddress: string,
+  publicIp?: string
+): { ip: string; announcedAddress?: string } => {
+  if (production || (announcedAddress && announcedAddress !== '127.0.0.1')) {
+    return { ip: '0.0.0.0', announcedAddress: announcedAddress || publicIp };
+  }
+  return { ip: '127.0.0.1' };
+};
+
 const loadMediasoup = async () => {
   const port = +config.webRtc.port;
 
@@ -47,33 +58,27 @@ const loadMediasoup = async () => {
 
   logger.debug('Mediasoup worker loaded');
 
-  if (IS_PRODUCTION) {
-    const announcedAddress = config.webRtc.announcedAddress || SERVER_PUBLIC_IP;
-
-    webRtcServer = await mediaSoupWorker.createWebRtcServer({
-      listenInfos: [
-        { protocol: 'udp', ip: '0.0.0.0', announcedAddress, port },
-        { protocol: 'tcp', ip: '0.0.0.0', announcedAddress, port }
-      ]
-    });
-
-    webRtcServerListenInfo = { ip: '0.0.0.0', announcedAddress };
-
-    logger.debug(
-      `WebRtcServer created on port ${port} with announcedAddress ${announcedAddress}`
-    );
-  } else {
-    webRtcServer = await mediaSoupWorker.createWebRtcServer({
-      listenInfos: [
-        { protocol: 'udp', ip: '127.0.0.1', port },
-        { protocol: 'tcp', ip: '127.0.0.1', port }
-      ]
-    });
-
-    webRtcServerListenInfo = { ip: '127.0.0.1' };
-
-    logger.debug(`WebRtcServer created on 127.0.0.1:${port} (dev mode)`);
-  }
+  const listenInfo = resolveWebRtcListenInfo(
+    IS_PRODUCTION,
+    config.webRtc.announcedAddress,
+    SERVER_PUBLIC_IP
+  );
+  webRtcServer = await mediaSoupWorker.createWebRtcServer({
+    listenInfos: [
+      { protocol: 'udp', ...listenInfo, port },
+      { protocol: 'tcp', ...listenInfo, port }
+    ]
+  });
+  webRtcServerListenInfo = listenInfo;
+  logger.debug(
+    `WebRtcServer created on ${listenInfo.ip}:${port} with announcedAddress ${listenInfo.announcedAddress ?? 'none'}`
+  );
 };
 
-export { loadMediasoup, mediaSoupWorker, webRtcServer, webRtcServerListenInfo };
+export {
+  loadMediasoup,
+  mediaSoupWorker,
+  resolveWebRtcListenInfo,
+  webRtcServer,
+  webRtcServerListenInfo
+};
